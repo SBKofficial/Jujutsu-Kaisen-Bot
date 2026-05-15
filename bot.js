@@ -680,10 +680,8 @@ const handleItemTransfer = async (ctx) => {
             const receiverInventory = receiver.inventory || [];
 
             // Find potion in sender's inventory
-            const potionIndex = senderInventory.findIndex(item => 
-                item.id === 'energy_drink' || item.id === 'cursed_charm' || item.id === 'exp_ticket'
-            );
-
+            const potionIndex = senderInventory.findIndex(item => item.qty > 0);
+            
             if (potionIndex === -1) {
                 return ctx.reply("❌ You don't have any potions!");
             }
