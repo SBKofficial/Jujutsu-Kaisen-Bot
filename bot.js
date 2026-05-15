@@ -533,57 +533,220 @@ bot.command('blackflash', minigame.startBlackFlash);
 bot.command('domains', domains.showDomainList);
 bot.command('help', (ctx) => utility.showHelp(ctx));
 
-// Removed placeholder /spectate and /replay commands
-// --- QUICK ADMIN & PLAYER TRANSFER COMMANDS ---
-const handleTransfer = async (ctx, type, label, icon) => {
+const handleItemTransfer = async (ctx) => {
+    if (!ctx.state.user) return ctx.reply("Please /start first.");
+    
     if (!ctx.message.reply_to_message) {
-        return ctx.reply(`❌ Reply to a user's message to ${ADMIN_IDS.includes(ctx.from.id) ? 'grant' : 'transfer'} ${label}.`);
+        return ctx.reply(
+            "❌ <b>USAGE:</b>\n\n" +
+            "Reply to a sorcerer with:\n" +
+            "<code>/send [item] [amount]</code>\n\n" +
+            "<b>Supported Items:</b>\n" +
+            "• <code>coins</code> - 💰\n" +
+            "• <code>dust</code> - ✨\n" +
+            "• <code>shards</code> - ✨\n" +
+            "• <code>potions</code> - 🧪\n\n" +
+            "<b>Examples:</b>\n" +
+            "<code>/send coins 500</code>\n" +
+            "<code>/send dust 100</code>\n" +
+            "<code>/send shards 50</code>\n" +
+            "<code>/send potions 5</code>",
+            { parse_mode: 'HTML' }
+        );
     }
-    const qty = parseInt(ctx.message.text.split(' ')[1]);
-    if (isNaN(qty) || qty <= 0) return ctx.reply(`Usage: /${ctx.command} (quantity)`);
+
+    const args = ctx.message.text.split(' ');
+    if (args.length < 3) {
+        return ctx.reply("❌ <b>Usage:</b> <code>/send [item_name] [amount]</code>", { parse_mode: 'HTML' });
+    }
+
+    const itemName = args[1].toLowerCase();
+    const amount = parseInt(args[2]);
+
+    if (isNaN(amount) || amount <= 0) {
+        return ctx.reply("❌ Amount must be a positive number!");
+    }
 
     const targetId = ctx.message.reply_to_message.from.id;
-    if (targetId === ctx.from.id) return ctx.reply("❌ You cannot transfer to yourself.");
+    const senderId = ctx.from.id;
 
-    if (ADMIN_IDS.includes(ctx.from.id)) {
-        // ADMIN GRANT
-        await adminService.addCurrency(ctx.from.id, targetId, type, qty);
-        return ctx.replyWithHTML(`✅ <b>${label} Granted!</b>\n\nRecipient: @${ctx.message.reply_to_message.from.username || targetId}\nAmount: ${icon} ${qty} ${label}`);
-    } else {
-        // PLAYER TRANSFER
-        const sender = await db.users.findOne({ telegramId: ctx.from.id });
-        const currencyKey = type === 'shards' ? 'shardsCurrency' : (type === 'gems' ? 'gems' : 'coins');
+    if (targetId === senderId) {
+        return ctx.reply("❌ You cannot transfer items to yourself!");
+    }
 
-        if ((sender[currencyKey] || 0) < qty) {
-            return ctx.reply(`❌ Insufficient ${label}! You have ${sender[currencyKey] || 0} ${label}.`);
+    // Get both users from DB
+    const sender = ctx.state.user;
+    const receiver = await db.users.findOne({ telegramId: targetId });
+
+    if (!receiver) {
+        return ctx.reply("❌ Target user not found or not registered!");
+    }
+
+    // Define item metadata
+    const itemConfig = {
+        coins: {
+            dbField: 'coins',
+            icon: '💰',
+            label: 'Coins',
+            type: 'currency'
+        },
+        dust: {
+            dbField: 'dust',
+            icon: '✨',
+            label: 'Cosmic Dust',
+            type: 'currency'
+        },
+        shards: {
+            dbField: 'shardsCurrency',
+            icon: '✨',
+            label: 'Shards',
+            type: 'currency'
+        },
+        shard: {
+            dbField: 'shardsCurrency',
+            icon: '✨',
+            label: 'Shards',
+            type: 'currency'
+        },
+        potions: {
+            dbField: null,
+            icon: '🧪',
+            label: 'Potions',
+            type: 'inventory'
+        },
+        potion: {
+            dbField: null,
+            icon: '🧪',
+            label: 'Potions',
+            type: 'inventory'
+        }
+    };
+
+    // Validate item
+    if (!itemConfig[itemName]) {
+        const validItems = Object.keys(itemConfig)
+            .filter((k, i, arr) => arr.indexOf(k) === i)
+            .map(k => `• ${itemConfig[k].icon} ${itemConfig[k].label}`)
+            .join('\n');
+        
+        return ctx.reply(
+            `❌ Invalid item! Valid items are:\n\n${validItems}`,
+            { parse_mode: 'HTML' }
+        );
+    }
+
+    const config = itemConfig[itemName];
+
+    try {
+        // Handle currency transfers
+        if (config.type === 'currency') {
+            const senderBalance = sender[config.dbField] || 0;
+
+            if (senderBalance < amount) {
+                return ctx.reply(
+                    `❌ Insufficient ${config.label}!\n` +
+                    `You have: ${config.icon} ${senderBalance}`,
+                    { parse_mode: 'HTML' }
+                );
+            }
+
+            // Perform transfer
+            await db.users.update(
+                { telegramId: senderId },
+                { $inc: { [config.dbField]: -amount } }
+            );
+            await db.users.update(
+                { telegramId: targetId },
+                { $inc: { [config.dbField]: amount } }
+            );
+
+            // Clear cache
+            USER_CACHE.delete(senderId);
+            USER_CACHE.delete(targetId);
+
+            return ctx.replyWithHTML(
+                `✅ <b>TRANSFER COMPLETE!</b>\n\n` +
+                `${config.icon} <b>${config.label}</b> Transferred\n\n` +
+                `<b>From:</b> @${ctx.from.username || senderId}\n` +
+                `<b>To:</b> @${ctx.message.reply_to_message.from.username || targetId}\n` +
+                `<b>Amount:</b> ${config.icon} ${amount}`,
+                { parse_mode: 'HTML' }
+            );
         }
 
-        // Deduct and Add
-        await db.users.update({ telegramId: ctx.from.id }, { $inc: { [currencyKey]: -qty } });
-        await db.users.update({ telegramId: targetId }, { $inc: { [currencyKey]: qty } });
+        // Handle inventory (potions) transfers
+        else if (config.type === 'inventory') {
+            const senderInventory = sender.inventory || [];
+            const receiverInventory = receiver.inventory || [];
 
-        return ctx.replyWithHTML(`🤝 <b>${label} Transferred!</b>\n\nFrom: @${ctx.from.username || ctx.from.id}\nTo: @${ctx.message.reply_to_message.from.username || targetId}\nAmount: ${icon} ${qty} ${label}`);
+            // Find potion in sender's inventory
+            const potionIndex = senderInventory.findIndex(item => 
+                item.id === 'energy_drink' || item.id === 'cursed_charm' || item.id === 'exp_ticket'
+            );
+
+            if (potionIndex === -1) {
+                return ctx.reply("❌ You don't have any potions!");
+            }
+
+            const potion = senderInventory[potionIndex];
+
+            if (potion.qty < amount) {
+                return ctx.reply(
+                    `❌ Insufficient ${config.label}!\n` +
+                    `You have: ${config.icon} ${potion.qty}`,
+                    { parse_mode: 'HTML' }
+                );
+            }
+
+            // Deduct from sender
+            if (potion.qty === amount) {
+                senderInventory.splice(potionIndex, 1);
+            } else {
+                potion.qty -= amount;
+            }
+
+            // Add to receiver
+            const receiverPotionIndex = receiverInventory.findIndex(item => item.id === potion.id);
+            if (receiverPotionIndex === -1) {
+                receiverInventory.push({ id: potion.id, qty: amount });
+            } else {
+                receiverInventory[receiverPotionIndex].qty += amount;
+            }
+
+            // Update both users
+            await db.users.update(
+                { telegramId: senderId },
+                { $set: { inventory: senderInventory } }
+            );
+            await db.users.update(
+                { telegramId: targetId },
+                { $set: { inventory: receiverInventory } }
+            );
+
+            // Clear cache
+            USER_CACHE.delete(senderId);
+            USER_CACHE.delete(targetId);
+
+            return ctx.replyWithHTML(
+                `✅ <b>TRANSFER COMPLETE!</b>\n\n` +
+                `${config.icon} <b>${potion.id.replace('_', ' ').toUpperCase()}</b> Transferred\n\n` +
+                `<b>From:</b> @${ctx.from.username || senderId}\n` +
+                `<b>To:</b> @${ctx.message.reply_to_message.from.username || targetId}\n` +
+                `<b>Amount:</b> ${config.icon} x${amount}`,
+                { parse_mode: 'HTML' }
+            );
+        }
+
+    } catch (error) {
+        console.error('Transfer error:', error);
+        return ctx.reply("❌ Transfer failed! Please try again.");
     }
 };
 
-bot.command('give', async (ctx) => {
-    ctx.command = 'give';
-    return handleTransfer(ctx, 'gems', 'Golds', '💎');
-});
-
-bot.command('send', async (ctx) => {
-    ctx.command = 'send';
-    return handleTransfer(ctx, 'shardsCurrency', 'Shards', '✨');
-});
-
-bot.command('gift', async (ctx) => {
-    ctx.command = 'gift';
-    return handleTransfer(ctx, 'coins', 'Coins', '💰');
-});
-
 bot.command('addfriend', social.addFriend);
 bot.command('friends', social.showFriends);
-
+// --- UNIFIED ITEM SHARING COMMAND ---
+bot.command('send', handleItemTransfer);
 bot.command('team', (ctx) => {
     if (!ctx.state.user) return ctx.reply("Please /start first.");
     if (isUserBusy(ctx, ctx.state.user)) return ctx.reply("⚠️ <b>RESTRICTED:</b> You cannot manage your team while in a battle!", { parse_mode: 'HTML' });
@@ -974,7 +1137,7 @@ bot.command('achievements', (ctx) => utility.showAchievements(ctx));
             { command: 'duel', description: 'Request a live GC duel with preparation' },
             { command: 'create_clan', description: 'Start your own Clan (1k Coins)' },
             { command: 'friends', description: 'Manage ally list' },
-            { command: 'gift', description: 'Send items to others' },
+            { command: 'send', description: 'Share items with sorcerers (coins/dust/shards/potions)' },
             { command: 'tournament', description: 'Enter the Zenin Tournament' },
             { command: 'leaderboard', description: 'View Special Grade rankings' },
             { command: 'rank', description: 'Check your global ELO position' },
