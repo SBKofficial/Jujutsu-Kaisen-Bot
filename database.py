@@ -1,5 +1,6 @@
 import os
 import asyncio
+import certifi
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from bson import ObjectId
@@ -102,11 +103,10 @@ class Database:
     async def connect(self):
         print(f"Attempting connection to: {MONGO_URI.split('@')[-1] if '@' in MONGO_URI else MONGO_URI}")
 
-        # Force the connection through by bypassing the certificate check
+        # Use certifi to provide the missing SSL certificates to MongoDB Atlas
         self.client = AsyncIOMotorClient(
             MONGO_URI, 
-            tls=True, 
-            tlsAllowInvalidCertificates=True
+            tlsCAFile=certifi.where()
         )
 
         # Use jjk_bot as the default database
@@ -128,3 +128,4 @@ class Database:
         return self._collections[name]
 
 db = Database()
+
