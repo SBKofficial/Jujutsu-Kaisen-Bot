@@ -3,12 +3,12 @@ user:
   github: "SBKofficial"
 
 runtime:
-  image: "node:18-alpine"
+  image: "python:3.11-slim"
 
 commands:
   build:
-    - "npm install"
-  start: "node bot.js"
+    - "pip install --no-cache-dir -r requirements.txt"
+  start: "python run_bot.py"
 
 repository:
   branch: "main"
@@ -18,3 +18,5 @@ environment:
   - BOT_TOKEN=${BOT_TOKEN}
   - BOT_USERNAME=${BOT_USERNAME}
   - ADMIN_IDS=${ADMIN_IDS}
+  - MONGODB_URI=${MONGODB_URI}
+  # add any other env vars from your .env here
