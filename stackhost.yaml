@@ -6,7 +6,6 @@ runtime:
   image: "node:18-alpine"
 
 commands:
-  package: "npm install"
   build:
     - "npm install"
   start: "node bot.js"
