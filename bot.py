@@ -17,7 +17,7 @@ from utils import ui, media
 from utils.handlers import (
     registration, gacha, explore, inventory, shop, train, pvp,
     team, upgrades, roster, quests, clans, utility, social, admin,
-    domains, minigame, tournament, competition, challenge, school
+    domains, minigame, tournament, competition, challenge, school, lvltrain
 )
 from utils.handlers import Keyboard_handler, charview   # ← NEW
 from services.matchmaking import matchmaking_service
@@ -172,6 +172,7 @@ async def set_commands():
         # Growth
         types.BotCommand(command="gacha",        description="Summon new sorcerers"),
         types.BotCommand(command="upgrades",     description="Level up & upgrade characters"),
+        types.BotCommand(command="lvltrain",     description="Fast coin-based Dojo leveling"),
         types.BotCommand(command="daily",        description="Claim daily rewards & stamina"),
         types.BotCommand(command="quests",       description="View & claim daily quests"),
         types.BotCommand(command="achievements", description="View your achievement milestones"),
@@ -574,6 +575,7 @@ async def main():
     dp.include_router(school.router)
     dp.include_router(charview.router)           # /view  /data
     dp.include_router(catch_all_router)          # Catch-all (must be last)
+    dp.include_router(lvltrain.router)
 
     print("Bot starting...")
     asyncio.create_task(matchmaking_service.process_queue())
