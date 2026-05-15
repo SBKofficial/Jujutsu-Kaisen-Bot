@@ -1,13 +1,13 @@
 import os
 import asyncio
+import certifi # Added to handle SSL handshake
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
+from bson import ObjectId
 
 load_dotenv()
 
 MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/jjk_bot')
-
-from bson import ObjectId
 
 class CollectionWrapper:
     def __init__(self, collection, name=None):
@@ -102,7 +102,10 @@ class Database:
 
     async def connect(self):
         print(f"Attempting connection to: {MONGO_URI.split('@')[-1] if '@' in MONGO_URI else MONGO_URI}")
-        self.client = AsyncIOMotorClient(MONGO_URI)
+        
+        # Inject tlsCAFile here to resolve the TLSV1_ALERT_INTERNAL_ERROR
+        self.client = AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where())
+        
         # Use jjk_bot as the default database
         self._db = self.client.get_database("jjk_bot")
         print('MongoDB Connected Successfully')
@@ -122,4 +125,3 @@ class Database:
         return self._collections[name]
 
 db = Database()
-
