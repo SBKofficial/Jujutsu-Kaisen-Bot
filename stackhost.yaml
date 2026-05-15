@@ -1,0 +1,21 @@
+user:
+  name: "SBKofficial"
+  github: "SBKofficial"
+
+runtime:
+  image: "node:18-alpine"
+
+commands:
+  package: "npm install"
+  build:
+    - "npm install"
+  start: "node bot.js"
+
+repository:
+  branch: "main"
+  auto_deploy: true
+
+environment:
+  - BOT_TOKEN=${BOT_TOKEN}
+  - BOT_USERNAME=${BOT_USERNAME}
+  - ADMIN_IDS=${ADMIN_IDS}
