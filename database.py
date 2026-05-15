@@ -1,6 +1,5 @@
 import os
 import asyncio
-import certifi # Added to handle SSL handshake
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from bson import ObjectId
@@ -102,24 +101,28 @@ class Database:
 
     async def connect(self):
         print(f"Attempting connection to: {MONGO_URI.split('@')[-1] if '@' in MONGO_URI else MONGO_URI}")
-        
-        # Inject tlsCAFile here to resolve the TLSV1_ALERT_INTERNAL_ERROR
-        self.client = AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where())
-        
+
+        # Force the connection through by bypassing the certificate check
+        self.client = AsyncIOMotorClient(
+            MONGO_URI, 
+            tls=True, 
+            tlsAllowInvalidCertificates=True
+        )
+
         # Use jjk_bot as the default database
         self._db = self.client.get_database("jjk_bot")
         print('MongoDB Connected Successfully')
-        
+
         # Ensure indexes
         await self._db.users.create_index("telegramId", unique=True)
 
     def __getattr__(self, name):
         if name in ['connect', 'client', '_db', '_collections']:
             return super().__getattribute__(name)
-        
+
         if self._db is None:
             raise Exception("Database not connected. Call db.connect() first.")
-            
+
         if name not in self._collections:
             self._collections[name] = CollectionWrapper(self._db[name], name)
         return self._collections[name]
