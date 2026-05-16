@@ -174,9 +174,9 @@ async def cmd_unified_send(message: types.Message, user: dict):
                 await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv}})
 
             if amount > 0:
-                return await message.reply(f"🪄 **ADMIN SPAWN:** Granted {amount:,}x **{item_display_name}** to @{target_name}.", parse_mode='Markdown')
+                return await message.reply(f"🪄 <b>ADMIN SPAWN:</b> Granted {amount:,}x <b>{item_display_name}</b> to @{target_name}.", parse_mode='HTML')
             else:
-                return await message.reply(f"⚖️ **ADMIN TAKE:** Removed {abs(amount):,}x **{item_display_name}** from @{target_name}.", parse_mode='Markdown')
+                return await message.reply(f"⚖️ <b>ADMIN TAKE:</b> Removed {abs(amount):,}x <b>{item_display_name}</b> from @{target_name}.", parse_mode='HTML')
 
         # --- PLAYER LOGIC ---
         else:
@@ -206,7 +206,7 @@ async def cmd_unified_send(message: types.Message, user: dict):
                 
                 await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv_target}})
 
-            return await message.reply(f"🎁 **GIFT SENT:** You gave {amount:,}x **{item_display_name}** to @{target_name}!", parse_mode='Markdown')
+            return await message.reply(f"🎁 <b>GIFT SENT:</b> You gave {amount:,}x <b>{item_display_name}</b> to @{target_name}!", parse_mode='HTML')
 
     except Exception as e:
         # IF IT CRASHES, IT WILL PRINT THE ERROR DIRECTLY TO TELEGRAM!
