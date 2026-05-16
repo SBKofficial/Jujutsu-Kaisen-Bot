@@ -574,8 +574,8 @@ async def main():
     dp.include_router(challenge.router)
     dp.include_router(school.router)
     dp.include_router(charview.router)           # /view  /data
-    dp.include_router(catch_all_router)          # Catch-all (must be last)
     dp.include_router(lvltrain.router)
+    dp.include_router(catch_all_router)          # Catch-all (must be last)
 
     print("Bot starting...")
     asyncio.create_task(matchmaking_service.process_queue())
