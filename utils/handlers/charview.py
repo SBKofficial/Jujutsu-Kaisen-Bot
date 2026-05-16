@@ -9,34 +9,39 @@ from utils.data import characters
 router = Router()
 
 # ─────────────────────────────────────────────
-#  /view <character name>
+#  /view & /inspect <character name>
 #  Shows stats (Info page) with Info / Moves tabs
 # ─────────────────────────────────────────────
 
-@router.message(Command("view"))
+@router.message(Command("view", "inspect"))
 async def cmd_view(message: types.Message, user: dict):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         return await message.reply(
-            "❌ <b>USAGE:</b> <code>/view &lt;character name&gt;</code>\n"
-            "Example: <code>/view Gojo Satoru Full</code>",
+            "❌ <b>USAGE:</b> <code>/inspect &lt;character name&gt;</code>\n"
+            "Example: <code>/inspect ryomen sukuna</code>",
             parse_mode='HTML'
         )
 
     query = args[1].strip()
     char_name, base = _resolve_char(query)
 
-    if not base:
-        return await message.reply(
-            f"❌ Character <b>{query}</b> not found in the archives.\n"
-            f"Use /data to search by partial name.",
-            parse_mode='HTML'
-        )
-
     # Check ownership
     owned_entry = None
-    if user:
+    if base and user:
         owned_entry = await db.roster.find_one({"userId": user['telegramId'], "charId": char_name})
+
+    # If the character doesn't exist OR the user doesn't own it
+    if not owned_entry:
+        error_msg = (
+            "❌ <b>Cʜᴀʀᴀᴄᴛᴇʀ Nᴏᴛ Fᴏᴜɴᴅ</b>\n\n"
+            "Yᴏᴜ Dᴏɴᴛ Oᴡɴ Aɴʏ Cʜᴀʀᴀᴄᴛᴇʀ Wɪᴛʜ Tʜɪꜱ Nᴀᴍᴇ\n\n"
+            "<i>𝘔𝘢𝘺𝘣𝘦 :</i>\n"
+            "• Cᴏʀʀᴇᴄᴛ Sᴩᴇʟʟɪɴɢ Yᴏᴜʀ Sᴩᴇʟʟɪɴɢ !\n\n"
+            "🎫 Example\n\n"
+            "<code>/inspect ryomen sukuna</code>"
+        )
+        return await message.reply(error_msg, parse_mode='HTML')
 
     msg = _build_info_msg(char_name, base, owned_entry)
     builder = _build_view_keyboard(char_name, "info")
@@ -53,7 +58,7 @@ async def cmd_view(message: types.Message, user: dict):
 
 # ─────────────────────────────────────────────
 #  /data <character name>
-#  Shows full character data + ownership badge
+#  Shows full character data + ownership badge (Global Pokedex)
 # ─────────────────────────────────────────────
 
 @router.message(Command("data"))
@@ -84,7 +89,11 @@ async def cmd_data(message: types.Message, user: dict):
 
     msg = _build_data_msg(char_name, base, owned_entry)
     builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="📖 View In-Game", callback_data=f"cmd_view_char_{char_name}"))
+    
+    # Only show the "View In-Game" button if they actually own it!
+    if owned_entry:
+        builder.row(types.InlineKeyboardButton(text="📖 View In-Game", callback_data=f"cmd_view_char_{char_name}"))
+        
     builder.row(types.InlineKeyboardButton(text="🔙 Back", callback_data="back_to_hub"))
 
     await media.send_portrait(
@@ -111,6 +120,9 @@ async def cb_view_info(callback: types.CallbackQuery, user: dict):
     owned_entry = None
     if user:
         owned_entry = await db.roster.find_one({"userId": user['telegramId'], "charId": char_name})
+        
+    if not owned_entry:
+        return await callback.answer("❌ You don't own this character!", show_alert=True)
 
     msg = _build_info_msg(char_name, base, owned_entry)
     builder = _build_view_keyboard(char_name, "info")
@@ -129,6 +141,9 @@ async def cb_view_moves(callback: types.CallbackQuery, user: dict):
     owned_entry = None
     if user:
         owned_entry = await db.roster.find_one({"userId": user['telegramId'], "charId": char_name})
+        
+    if not owned_entry:
+        return await callback.answer("❌ You don't own this character!", show_alert=True)
 
     msg = _build_moves_msg(char_name, base, owned_entry)
     builder = _build_view_keyboard(char_name, "moves")
@@ -339,3 +354,4 @@ def _build_data_msg(char_name: str, base: dict, owned_entry=None) -> str:
     )
 
     return msg
+
