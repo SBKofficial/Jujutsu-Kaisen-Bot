@@ -218,8 +218,12 @@ def _build_info_msg(char_name: str, base: dict, owned_entry=None) -> str:
     energy_label = 'Physical Energy' if base.get('energyType') == 'PE' else 'Cursed Energy'
     energy_icon = '💪' if base.get('energyType') == 'PE' else '🌀'
 
-    moves = base.get('moves', [])
-    move_preview = ", ".join(m['name'] for m in moves[:3])
+    if owned_entry and 'custom_moves' in owned_entry:
+        moves = owned_entry['custom_moves']
+    else:
+        moves = base.get('moves', [])
+        
+    move_preview = ", ".join(m.get('name', 'Unknown') for m in moves[:3])
     if len(moves) > 3:
         move_preview += f" +{len(moves)-3} more"
 
@@ -250,7 +254,10 @@ def _build_info_msg(char_name: str, base: dict, owned_entry=None) -> str:
 
 
 def _build_moves_msg(char_name: str, base: dict, owned_entry=None) -> str:
-    moves = base.get('moves', [])
+    if owned_entry and 'custom_moves' in owned_entry:
+        moves = owned_entry['custom_moves']
+    else:
+        moves = base.get('moves', [])
 
     msg = (
         f"🥋 <b>{char_name.upper()} — TECHNIQUES</b>\n"
