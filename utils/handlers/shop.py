@@ -329,35 +329,80 @@ CF_ITEMS = {
 }
 
 async def get_or_generate_cf_store(user: dict):
-    """Fetches the user's current 5 CFs, or generates new ones if empty."""
+    """Fetches the user's CF store, handling daily auto-resets and migrations."""
+    now_date = datetime.utcnow()
+    today_str = now_date.strftime('%Y-%m-%d')
+    
     shop_state = user.get('shopState', {})
-    if 'cf_store' not in shop_state or not shop_state['cf_store']:
-        # Generate 5 random CFs
+    cf_state = shop_state.get('cf_store', {})
+    
+    # Migrate old data format (if they used the previous version of the shop)
+    if isinstance(cf_state, list):
+        cf_state = {
+            'items': cf_state[:4], # Cut to 4 items for the new layout
+            'last_reset_day': '1970-01-01',
+            'manual_refreshes': 0
+        }
+        
+    # Check if a 24hr auto-refresh is needed
+    if cf_state.get('last_reset_day') != today_str:
         available_cfs = list(CF_ITEMS.keys())
-        chosen = random.sample(available_cfs, min(5, len(available_cfs)))
-        shop_state['cf_store'] = chosen
+        # Generate exactly 4 items for the new layout
+        cf_state['items'] = random.sample(available_cfs, min(4, len(available_cfs)))
+        cf_state['last_reset_day'] = today_str
+        cf_state['manual_refreshes'] = 0
+        shop_state['cf_store'] = cf_state
         await db.users.update({"telegramId": user['telegramId']}, {"$set": {"shopState": shop_state}})
-    return shop_state['cf_store']
+        
+    return cf_state, shop_state
 
 @router.callback_query(F.data == "shop_cf_store")
 async def cb_shop_cf_store(callback: types.CallbackQuery, user: dict):
-    current_cfs = await get_or_generate_cf_store(user)
+    cf_state, _ = await get_or_generate_cf_store(user)
     
-    msg = ui.format_header("CF STORE") + "\n\n" + \
-          "Welcome to the exclusive CF Store! These fragments rotate when refreshed.\n\n" + \
-          f"💰 <b>Your Coins:</b> <code>{user.get('coins', 0):,}</code>\n\n"
-          
+    msg = "🧩 <b>Cursed Fragments:</b>\n"
+    msg += f"Your Coins: <code>{user.get('coins', 0):,}</code> 💰\n\n"
+    
     builder = InlineKeyboardBuilder()
+    buy_buttons = []
+    number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
     
-    for cf_id in current_cfs:
-        cf_data = CF_ITEMS.get(cf_id)
-        if cf_data:
-            builder.row(types.InlineKeyboardButton(
-                text=f"🛒 {cf_data['name']} - {cf_data['price']:,}", 
-                callback_data=f"shop_buy_cf_{cf_id}"
-            ))
+    for i, cf_id in enumerate(cf_state.get('items', [])):
+        cf = CF_ITEMS.get(cf_id)
+        if not cf: continue
             
-    builder.row(types.InlineKeyboardButton(text="🔄 Refresh (3,000 Coins)", callback_data="shop_cf_refresh"))
+        # Format the name (e.g., "CF: Divergent Fist" -> "Divergent Fist")
+        raw_num = cf_id.replace('cf', '')
+        real_name = cf['name'].replace("CF: ", "").replace("CF:", "").strip()
+        
+        msg += f"<b>{i+1}) CF #{raw_num} : {real_name}</b>\n"
+        msg += f"   Power: {cf.get('power', 0)}\n"
+        msg += f"   Accuracy: {cf.get('accuracy', 0)}\n"
+        msg += f"   Price: {cf.get('price', 0):,} 💰\n\n"
+        
+        # Add a buy button for this item
+        buy_buttons.append(
+            types.InlineKeyboardButton(text=f"{number_emojis[i]} Buy", callback_data=f"shop_buy_cf_{cf_id}")
+        )
+        
+    # Arrange buy buttons in rows of 2 for a clean grid
+    for i in range(0, len(buy_buttons), 2):
+        builder.row(*buy_buttons[i:i+2])
+
+    # Calculate time until next auto-refresh (Midnight UTC)
+    now = datetime.utcnow()
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    time_left = tomorrow - now
+    hours, remainder = divmod(int(time_left.total_seconds()), 3600)
+    minutes, _ = divmod(remainder, 60)
+    
+    msg += f"🌟 <i>CF Store will refresh in: {hours}h {minutes}m</i>"
+
+    # Calculate dynamic refresh cost
+    current_refreshes = cf_state.get('manual_refreshes', 0)
+    refresh_cost = 3000 * (current_refreshes + 1)
+    
+    builder.row(types.InlineKeyboardButton(text=f"🔄 Refresh ({refresh_cost:,} 💰)", callback_data="shop_cf_refresh"))
     builder.row(types.InlineKeyboardButton(text="🔙 Cursed Market", callback_data="shop_menu"))
     
     await callback.answer()
@@ -365,23 +410,29 @@ async def cb_shop_cf_store(callback: types.CallbackQuery, user: dict):
 
 @router.callback_query(F.data == "shop_cf_refresh")
 async def cb_shop_cf_refresh(callback: types.CallbackQuery, user: dict):
-    if user.get('coins', 0) < 3000:
-        return await callback.answer("❌ You need 3,000 Coins to refresh the store!", show_alert=True)
+    cf_state, shop_state = await get_or_generate_cf_store(user)
+    
+    # Calculate current cost
+    current_refreshes = cf_state.get('manual_refreshes', 0)
+    cost = 3000 * (current_refreshes + 1)
+    
+    if user.get('coins', 0) < cost:
+        return await callback.answer(f"❌ You need {cost:,} Coins to refresh the store!", show_alert=True)
         
-    # 1. Deduct 3000 coins
-    await db.users.update({"telegramId": user['telegramId']}, {"$inc": {"coins": -3000}})
-    user['coins'] = user.get('coins', 0) - 3000 # Update local dict for UI
+    # 1. Deduct coins
+    await db.users.update({"telegramId": user['telegramId']}, {"$inc": {"coins": -cost}})
+    user['coins'] = user.get('coins', 0) - cost # Update local dict for UI
     
-    # 2. Generate 5 new items
+    # 2. Generate 4 new items & increment manual refresh count
     available_cfs = list(CF_ITEMS.keys())
-    chosen = random.sample(available_cfs, min(5, len(available_cfs)))
+    cf_state['items'] = random.sample(available_cfs, min(4, len(available_cfs)))
+    cf_state['manual_refreshes'] += 1
+    shop_state['cf_store'] = cf_state
     
-    # 3. Save to database
-    shop_state = user.get('shopState', {})
-    shop_state['cf_store'] = chosen
+    # 3. Save state
     await db.users.update({"telegramId": user['telegramId']}, {"$set": {"shopState": shop_state}})
     
-    await callback.answer("🔄 Store Refreshed!", show_alert=False)
+    await callback.answer(f"🔄 Store Refreshed for {cost:,} Coins!", show_alert=False)
     await cb_shop_cf_store(callback, user) # Re-render the menu
     
 @router.callback_query(F.data.startswith("shop_buy_cf_"))
