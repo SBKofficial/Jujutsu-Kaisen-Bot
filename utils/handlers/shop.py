@@ -72,7 +72,7 @@ async def cmd_shop(callback_or_message: types.CallbackQuery | types.Message, use
     )
 
     builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🔙 Back to Hub", callback_data="back_to_hub"))
+    builder.row(types.InlineKeyboardButton(text="🏪 CF Store", callback_data="shop_cf_store"))
 
     if isinstance(callback_or_message, types.CallbackQuery):
         await media.edit_banner(callback_or_message.message, "Market", msg, reply_markup=builder.as_markup())
@@ -268,3 +268,148 @@ async def handle_gift(message: types.Message, user: dict):
 @router.callback_query(F.data == "nop")
 async def nop(callback: types.CallbackQuery):
     await callback.answer("This item is sold out!")
+
+import random
+
+# ==========================================
+#              CF STORE LOGIC
+# ==========================================
+
+CF_ITEMS = {
+    "cf109": {"id": "cf109", "name": "CF: Divergent Fist", "price": 5000, "power": 70, "accuracy": 100},
+    "cf16":  {"id": "cf16", "name": "CF: Black Flash", "price": 12000, "power": 120, "accuracy": 85},
+    "cf287": {"id": "cf287", "name": "CF: Cleave", "price": 10000, "power": 110, "accuracy": 95},
+    "cf54":  {"id": "cf54", "name": "CF: Dismantle", "price": 8000, "power": 90, "accuracy": 100},
+    "cf193": {"id": "cf193", "name": "CF: Blast Away", "price": 8000, "power": 85, "accuracy": 95},
+    "cf72":  {"id": "cf72", "name": "CF: Don't Move", "price": 5000, "power": 40, "accuracy": 100},
+    "cf241": {"id": "cf241", "name": "CF: Boogie Woogie", "price": 8000, "power": 0, "accuracy": 100},
+    "cf8":   {"id": "cf8", "name": "CF: Ratio Technique", "price": 8000, "power": 95, "accuracy": 95},
+    "cf156": {"id": "cf156", "name": "CF: Resonance", "price": 8000, "power": 100, "accuracy": 90},
+    "cf299": {"id": "cf299", "name": "CF: Hairpin", "price": 5000, "power": 75, "accuracy": 100},
+    "cf44":  {"id": "cf44", "name": "CF: Piercing Blood", "price": 10000, "power": 105, "accuracy": 90},
+    "cf211": {"id": "cf211", "name": "CF: Supernova", "price": 8000, "power": 95, "accuracy": 95},
+    "cf95":  {"id": "cf95", "name": "CF: Blood Edge", "price": 8000, "power": 80, "accuracy": 100},
+    "cf268": {"id": "cf268", "name": "CF: Hollow Purple", "price": 15000, "power": 160, "accuracy": 75},
+    "cf131": {"id": "cf131", "name": "CF: Red", "price": 10000, "power": 110, "accuracy": 90},
+    "cf27":  {"id": "cf27", "name": "CF: Blue", "price": 8000, "power": 85, "accuracy": 100},
+    "cf184": {"id": "cf184", "name": "CF: Infinity Crush", "price": 8000, "power": 0, "accuracy": 100},
+    "cf300": {"id": "cf300", "name": "CF: Maximum Uzumaki", "price": 15000, "power": 145, "accuracy": 80},
+    "cf63":  {"id": "cf63", "name": "CF: CS Manipulation", "price": 8000, "power": 90, "accuracy": 95},
+    "cf147": {"id": "cf147", "name": "CF: Idle Transfiguration", "price": 12000, "power": 130, "accuracy": 85},
+    "cf11":  {"id": "cf11", "name": "CF: Soul Touch", "price": 5000, "power": 75, "accuracy": 100},
+    "cf222": {"id": "cf222", "name": "CF: HR Strike", "price": 10000, "power": 100, "accuracy": 100},
+    "cf88":  {"id": "cf88", "name": "CF: Split Soul Katana", "price": 10000, "power": 115, "accuracy": 90},
+    "cf175": {"id": "cf175", "name": "CF: Playful Cloud Smash", "price": 8000, "power": 95, "accuracy": 100},
+    "cf259": {"id": "cf259", "name": "CF: Jacob's Ladder", "price": 15000, "power": 140, "accuracy": 80},
+    "cf39":  {"id": "cf39", "name": "CF: Angel Wings", "price": 8000, "power": 85, "accuracy": 95},
+    "cf118": {"id": "cf118", "name": "CF: Granite Blast", "price": 12000, "power": 125, "accuracy": 85},
+    "cf203": {"id": "cf203", "name": "CF: Sky Manipulation", "price": 8000, "power": 90, "accuracy": 95},
+    "cf67":  {"id": "cf67", "name": "CF: Thin Ice Breaker", "price": 10000, "power": 110, "accuracy": 90},
+    "cf290": {"id": "cf290", "name": "CF: Projection Sorcery", "price": 5000, "power": 70, "accuracy": 100},
+    "cf14":  {"id": "cf14", "name": "CF: Frame Freeze", "price": 8000, "power": 85, "accuracy": 95},
+    "cf233": {"id": "cf233", "name": "CF: Divine Dogs", "price": 8000, "power": 80, "accuracy": 100},
+    "cf81":  {"id": "cf81", "name": "CF: Nue Lightning", "price": 8000, "power": 95, "accuracy": 95},
+    "cf170": {"id": "cf170", "name": "CF: Toad Bind", "price": 5000, "power": 60, "accuracy": 100},
+    "cf276": {"id": "cf276", "name": "CF: Max Elephant", "price": 12000, "power": 120, "accuracy": 85},
+    "cf52":  {"id": "cf52", "name": "CF: Rabbit Escape", "price": 5000, "power": 0, "accuracy": 100},
+    "cf198": {"id": "cf198", "name": "CF: Mahoraga Slash", "price": 15000, "power": 150, "accuracy": 70},
+    "cf124": {"id": "cf124", "name": "CF: Ice Formation", "price": 8000, "power": 100, "accuracy": 90},
+    "cf35":  {"id": "cf35", "name": "CF: Frost Calm", "price": 8000, "power": 80, "accuracy": 100},
+    "cf214": {"id": "cf214", "name": "CF: Lightning God Strike", "price": 12000, "power": 130, "accuracy": 85},
+    "cf91":  {"id": "cf91", "name": "CF: Star Rage Punch", "price": 10000, "power": 115, "accuracy": 90},
+    "cf261": {"id": "cf261", "name": "CF: Garuda Whip", "price": 8000, "power": 90, "accuracy": 100},
+    "cf19":  {"id": "cf19", "name": "CF: Sword Draw", "price": 8000, "power": 95, "accuracy": 100},
+    "cf145": {"id": "cf145", "name": "CF: Tool Barrage", "price": 10000, "power": 110, "accuracy": 90},
+    "cf227": {"id": "cf227", "name": "CF: RCT Heal", "price": 10000, "power": 0, "accuracy": 100},
+    "cf78":  {"id": "cf78", "name": "CF: Meteor Strike", "price": 15000, "power": 155, "accuracy": 75},
+    "cf186": {"id": "cf186", "name": "CF: Lava Blast", "price": 10000, "power": 110, "accuracy": 90},
+    "cf104": {"id": "cf104", "name": "CF: Earthquake Fist", "price": 8000, "power": 100, "accuracy": 95},
+    "cf248": {"id": "cf248", "name": "CF: Curse Absorption", "price": 8000, "power": 0, "accuracy": 100},
+    "cf57":  {"id": "cf57", "name": "CF: Soul Splitter", "price": 12000, "power": 125, "accuracy": 85}
+}
+
+async def get_or_generate_cf_store(user: dict):
+    """Fetches the user's current 5 CFs, or generates new ones if empty."""
+    shop_state = user.get('shopState', {})
+    if 'cf_store' not in shop_state or not shop_state['cf_store']:
+        # Generate 5 random CFs
+        available_cfs = list(CF_ITEMS.keys())
+        chosen = random.sample(available_cfs, min(5, len(available_cfs)))
+        shop_state['cf_store'] = chosen
+        await db.users.update({"telegramId": user['telegramId']}, {"$set": {"shopState": shop_state}})
+    return shop_state['cf_store']
+
+@router.callback_query(F.data == "shop_cf_store")
+async def cb_shop_cf_store(callback: types.CallbackQuery, user: dict):
+    current_cfs = await get_or_generate_cf_store(user)
+    
+    msg = ui.format_header("CF STORE") + "\n\n" + \
+          "Welcome to the exclusive CF Store! These fragments rotate when refreshed.\n\n" + \
+          f"💰 <b>Your Coins:</b> <code>{user.get('coins', 0):,}</code>\n\n"
+          
+    builder = InlineKeyboardBuilder()
+    
+    for cf_id in current_cfs:
+        cf_data = CF_ITEMS.get(cf_id)
+        if cf_data:
+            builder.row(types.InlineKeyboardButton(
+                text=f"🛒 {cf_data['name']} - {cf_data['price']:,}", 
+                callback_data=f"shop_buy_cf_{cf_id}"
+            ))
+            
+    builder.row(types.InlineKeyboardButton(text="🔄 Refresh (3,000 Coins)", callback_data="shop_cf_refresh"))
+    builder.row(types.InlineKeyboardButton(text="🔙 Cursed Market", callback_data="shop_menu"))
+    
+    await callback.answer()
+    await media.smart_edit(callback.message, msg, reply_markup=builder.as_markup())
+
+@router.callback_query(F.data == "shop_cf_refresh")
+async def cb_shop_cf_refresh(callback: types.CallbackQuery, user: dict):
+    if user.get('coins', 0) < 3000:
+        return await callback.answer("❌ You need 3,000 Coins to refresh the store!", show_alert=True)
+        
+    # 1. Deduct 3000 coins
+    await db.users.update({"telegramId": user['telegramId']}, {"$inc": {"coins": -3000}})
+    user['coins'] = user.get('coins', 0) - 3000 # Update local dict for UI
+    
+    # 2. Generate 5 new items
+    available_cfs = list(CF_ITEMS.keys())
+    chosen = random.sample(available_cfs, min(5, len(available_cfs)))
+    
+    # 3. Save to database
+    shop_state = user.get('shopState', {})
+    shop_state['cf_store'] = chosen
+    await db.users.update({"telegramId": user['telegramId']}, {"$set": {"shopState": shop_state}})
+    
+    await callback.answer("🔄 Store Refreshed!", show_alert=False)
+    await cb_shop_cf_store(callback, user) # Re-render the menu
+    
+@router.callback_query(F.data.startswith("shop_buy_cf_"))
+async def cb_shop_buy_cf(callback: types.CallbackQuery, user: dict):
+    cf_id = callback.data.replace("shop_buy_cf_", "")
+    cf_data = CF_ITEMS.get(cf_id)
+    
+    if not cf_data:
+        return await callback.answer("❌ Item no longer exists.", show_alert=True)
+        
+    price = cf_data['price']
+    if user.get('coins', 0) < price:
+        return await callback.answer(f"❌ You need {price:,} Coins to buy this!", show_alert=True)
+        
+    # Deduct coins and add CF to inventory array
+    inv = user.get('inventory', [])
+    idx = next((i for i, x in enumerate(inv) if x['id'] == cf_id), -1)
+    if idx > -1:
+        inv[idx]['qty'] += 1
+    else:
+        inv.append({"id": cf_id, "qty": 1})
+        
+    await db.users.update({"telegramId": user['telegramId']}, {
+        "$inc": {"coins": -price},
+        "$set": {"inventory": inv}
+    })
+    user['coins'] -= price # Update local dict so the UI refreshes instantly
+    
+    await callback.answer(f"✅ Successfully purchased {cf_data['name']}!", show_alert=True)
+    await cb_shop_cf_store(callback, user) # Refresh UI to show new coin balance
+

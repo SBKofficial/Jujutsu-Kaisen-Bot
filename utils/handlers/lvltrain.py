@@ -9,7 +9,7 @@ from services.user_service import user_service
 
 router = Router()
 
-COST_PER_LEVEL = 50
+COST_PER_LEVEL = 250
 
 @router.message(Command("lvltrain"))
 @router.callback_query(F.data == "cmd_lvltrain")
@@ -46,7 +46,7 @@ async def render_train_menu(cob: types.CallbackQuery | types.Message, user: dict
         "Welcome to the dojo. Spend your coins to push your sorcerers past their limits!\n\n"
         f"💰 <b>Your Balance:</b> <code>{user.get('coins', 0):,} Coins</code>\n"
         f"🏷 <b>Cost per Level:</b> <code>{COST_PER_LEVEL} Coins</code>\n\n"
-        "<i>Select a sorcerer to train:</i>"
+        "<i>Select a character to train:</i>"
     )
     
     builder = InlineKeyboardBuilder()
