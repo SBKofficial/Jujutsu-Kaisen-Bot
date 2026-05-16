@@ -107,7 +107,7 @@ async def cmd_unified_send(message: types.Message, user: dict):
     try:
         # 1. Require replying to a message
         if not message.reply_to_message or not message.reply_to_message.from_user:
-            return await message.reply("⚠️ You must **reply to a user's message** to send or modify items.", parse_mode='HTML')
+            return await message.reply("⚠️ You must **reply to a user's message** to send or modify items.", parse_mode='Markdown')
 
         target_id = message.reply_to_message.from_user.id
         sender_id = message.from_user.id
@@ -122,7 +122,7 @@ async def cmd_unified_send(message: types.Message, user: dict):
         # 2. Parse command
         args = message.text.split(maxsplit=1)
         if len(args) < 2:
-            return await message.reply("📝 **Usage:** Reply to a user with <code>/send [item name] [amount]</code>\n*Example:* <code>/send sukuna finger 2</code>", parse_mode='HTML')
+            return await message.reply("📝 **Usage:** Reply to a user with <code>/send [item name] [amount]</code>\n*Example:* <code>/send sukuna finger 2</code>", parse_mode='Markdown')
 
         parts = args[1].split()
         try:
@@ -174,16 +174,16 @@ async def cmd_unified_send(message: types.Message, user: dict):
                 await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv}})
 
             if amount > 0:
-                return await message.reply(f"🪄 **ADMIN SPAWN:** Granted {amount:,}x **{item_display_name}** to @{target_name}.", parse_mode='HTML')
+                return await message.reply(f"🪄 **ADMIN SPAWN:** Granted {amount:,}x **{item_display_name}** to @{target_name}.", parse_mode='Markdown')
             else:
-                return await message.reply(f"⚖️ **ADMIN TAKE:** Removed {abs(amount):,}x **{item_display_name}** from @{target_name}.", parse_mode='HTML')
+                return await message.reply(f"⚖️ **ADMIN TAKE:** Removed {abs(amount):,}x **{item_display_name}** from @{target_name}.", parse_mode='Markdown')
 
         # --- PLAYER LOGIC ---
         else:
             if is_currency:
                 sender_bal = user.get(item_id, 0)
                 if sender_bal < amount:
-                    return await message.reply(f"❌ You don't have enough **{item_display_name}**. (Balance: {sender_bal:,})", parse_mode='HTML')
+                    return await message.reply(f"❌ You don't have enough **{item_display_name}**. (Balance: {sender_bal:,})", parse_mode='Markdown')
                 
                 await db.users.update({"telegramId": sender_id}, {"$inc": {item_id: -amount}})
                 await db.users.update({"telegramId": target_id}, {"$inc": {item_id: amount}})
@@ -193,7 +193,7 @@ async def cmd_unified_send(message: types.Message, user: dict):
                 
                 if idx_sender == -1 or inv_sender[idx_sender]['qty'] < amount:
                     has_qty = inv_sender[idx_sender]['qty'] if idx_sender != -1 else 0
-                    return await message.reply(f"❌ You don't have enough **{item_display_name}**. (You have: {has_qty:,})", parse_mode='HTML')
+                    return await message.reply(f"❌ You don't have enough **{item_display_name}**. (You have: {has_qty:,})", parse_mode='Markdown')
 
                 inv_sender[idx_sender]['qty'] -= amount
                 inv_sender = [i for i in inv_sender if i['qty'] > 0]
@@ -206,7 +206,7 @@ async def cmd_unified_send(message: types.Message, user: dict):
                 
                 await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv_target}})
 
-            return await message.reply(f"🎁 **GIFT SENT:** You gave {amount:,}x **{item_display_name}** to @{target_name}!", parse_mode='HTML')
+            return await message.reply(f"🎁 **GIFT SENT:** You gave {amount:,}x **{item_display_name}** to @{target_name}!", parse_mode='Markdown')
 
     except Exception as e:
         # IF IT CRASHES, IT WILL PRINT THE ERROR DIRECTLY TO TELEGRAM!
