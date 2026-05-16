@@ -18,7 +18,7 @@ from utils.handlers import (
     registration, gacha, explore, inventory, shop, train, pvp,
     team, upgrades, roster, quests, clans, utility, social, admin, # <-- Make sure social is here!
     domains, minigame, tournament, competition, challenge, school,
-    lvltrain
+    lvltrain, fragments
 )
 from utils.handlers import Keyboard_handler, charview   # ← NEW
 from services.matchmaking import matchmaking_service
@@ -591,6 +591,7 @@ async def main():
     
     # Add the social router here so /send works!
     dp.include_router(social.router)           
+    dp.include_router(fragments.router)           
     
     # THIS MUST BE THE ABSOLUTE LAST ROUTER!
     dp.include_router(catch_all_router)          
