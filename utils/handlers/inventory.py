@@ -14,6 +14,9 @@ async def render_inventory(callback_or_message, user, category=None):
     inv = user.get('inventory', [])
     uid = f":uid_{user['telegramId']}"
     
+    # Import CF_ITEMS here to prevent circular imports
+    from utils.handlers.shop import CF_ITEMS
+    
     if not category:
         msg = (
             "⚡ <b>Yᴏᴜʀ Iɴᴠᴇɴᴛᴏʀʏ</b> 👇\n\n"
@@ -26,6 +29,7 @@ async def render_inventory(callback_or_message, user, category=None):
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text="🗡️ Weapons", callback_data=f"inv_cat_weapons{uid}"))
         builder.row(types.InlineKeyboardButton(text="🎒 Items", callback_data=f"inv_cat_items{uid}"))
+        builder.row(types.InlineKeyboardButton(text="🧩 Fragments (CF)", callback_data=f"inv_cat_cfs{uid}"))
         builder.row(types.InlineKeyboardButton(text="🔙 Return to Hub", callback_data=f"back_to_hub{uid}"))
 
         if isinstance(callback_or_message, types.CallbackQuery):
@@ -38,24 +42,34 @@ async def render_inventory(callback_or_message, user, category=None):
     
     filtered_inv = []
     for entry in inv:
-        item_data = ITEMS.get(entry['id'])
+        item_id = str(entry['id'])
+        item_data = ITEMS.get(item_id) or CF_ITEMS.get(item_id)
         if not item_data: continue
-        is_weapon = entry['id'] in weapons_ids
+        
+        is_weapon = item_id in weapons_ids
+        is_cf = item_id.startswith('cf')
+        
         if category == 'weapons' and is_weapon:
             filtered_inv.append((entry, item_data))
-        elif category == 'items' and not is_weapon:
+        elif category == 'cfs' and is_cf:
+            filtered_inv.append((entry, item_data))
+        elif category == 'items' and not is_weapon and not is_cf:
             filtered_inv.append((entry, item_data))
 
-    cat_name = "Weapons" if category == 'weapons' else "Items"
-    msg = f"⚡ <b>Yᴏᴜʀ Iɴᴠᴇɴᴛᴏʀʏ - {cat_name}</b> 👇\n\n<i>Tap an item to use or view details.</i>"
+    if category == 'weapons': cat_name = "Weapons"
+    elif category == 'cfs': cat_name = "Cursed Fragments"
+    else: cat_name = "Items"
+    
+    msg = f"⚡ <b>Yᴏᴜʀ Iɴᴠᴇɴᴛᴏʀʏ - {cat_name}</b> 👇\n\n<i>Tap an item to view details.</i>"
     
     builder = InlineKeyboardBuilder()
     if not filtered_inv:
         msg += "\n\n<i>You don't have any items in this category.</i>"
         
     for entry, item_data in filtered_inv:
+        icon = item_data.get('icon', '🧩') if item_data.get('id', '').startswith('cf') else item_data.get('icon', '📦')
         builder.row(types.InlineKeyboardButton(
-            text=f"{item_data['icon']} {item_data['name']} (x{entry['qty']})", 
+            text=f"{icon} {item_data['name']} (x{entry['qty']})", 
             callback_data=f"view_inv_{entry['id']}{uid}"
         ))
     
@@ -88,7 +102,11 @@ async def cmd_inventory_category(callback: types.CallbackQuery, user: dict):
 @router.callback_query(F.data.startswith("view_inv_"))
 async def view_item_details(callback: types.CallbackQuery, user: dict):
     item_id = callback.data.replace("view_inv_", "").split(":")[0]
-    item = ITEMS.get(item_id)
+    
+    # Import CF_ITEMS here as well
+    from utils.handlers.shop import CF_ITEMS
+    
+    item = ITEMS.get(item_id) or CF_ITEMS.get(item_id)
     if not item: 
         await callback.answer("Item not found.")
         return
@@ -98,31 +116,43 @@ async def view_item_details(callback: types.CallbackQuery, user: dict):
     if not inv_entry or inv_entry['qty'] <= 0: 
         return await callback.answer("You no longer own this item.")
 
-    type_str = item.get('shop', {}).get('category', 'Consumable')
-    msg = (
-        ui.format_header(item['name']) + "\n\n"
-        f"Type: <b>{type_str.upper()}</b>\n"
-        f"Quantity: <b>{inv_entry['qty']}</b>\n\n"
-        f"<i>{item['description']}</i>"
-    )
-
     uid = f":uid_{user['telegramId']}"
     builder = InlineKeyboardBuilder()
-    usable_out_of_battle = [
-        'energy_drink', 'exp_ticket', 'cursed_charm', 'exp_charm', 
-        'minor_hp_potion', 'ce_charge', 'elixir', 'fragment', 
-        'pill', 'dshard', 'reset_orb'
-    ]
-    if item_id in usable_out_of_battle:
-        builder.row(types.InlineKeyboardButton(text=f"✨ Use {item['name']}", callback_data=f"use_inv_{item_id}{uid}"))
-    
+
+    # Special handling for Cursed Fragments
+    if item_id.startswith('cf'):
+        type_str = "CURSED FRAGMENT"
+        desc = (
+            f"⚔️ <b>Power:</b> {item.get('power', 0)}\n"
+            f"🎯 <b>Accuracy:</b> {item.get('accuracy', 0)}%\n\n"
+            f"<i>A fragment holding a cursed technique. This can be equipped to your sorcerers to grant them new abilities in combat.</i>"
+        )
+    # Standard items
+    else:
+        type_str = item.get('shop', {}).get('category', 'Consumable').upper()
+        desc = f"<i>{item.get('description', '')}</i>"
+        usable_out_of_battle = [
+            'energy_drink', 'exp_ticket', 'cursed_charm', 'exp_charm', 
+            'minor_hp_potion', 'ce_charge', 'elixir', 'fragment', 
+            'pill', 'dshard', 'reset_orb'
+        ]
+        if item_id in usable_out_of_battle:
+            builder.row(types.InlineKeyboardButton(text=f"✨ Use {item['name']}", callback_data=f"use_inv_{item_id}{uid}"))
+
+    msg = (
+        ui.format_header(item['name']) + "\n\n"
+        f"Type: <b>{type_str}</b>\n"
+        f"Quantity: <b>{inv_entry['qty']}</b>\n\n"
+        f"{desc}"
+    )
+
     builder.row(types.InlineKeyboardButton(text="⬅️ Back to Bag", callback_data=f"cmd_inv{uid}"))
 
     await media.edit_banner(callback.message, item_id, msg, reply_markup=builder.as_markup())
 
 @router.callback_query(F.data.startswith("use_inv_"))
 async def use_item(callback: types.CallbackQuery, user: dict):
-    item_id = callback.data.replace("use_inv_", "")
+    item_id = callback.data.replace("use_inv_", "").split(":")[0]
     inv = user.get('inventory', [])
     inv_entry = next((i for i in inv if i['id'] == item_id), None)
 
@@ -199,3 +229,4 @@ async def use_item(callback: types.CallbackQuery, user: dict):
 
     await callback.answer(update_result, show_alert=True)
     await render_inventory(callback, user)
+
