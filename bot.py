@@ -59,6 +59,21 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
 
+import subprocess
+
+def get_latest_commit():
+    """Fetches the latest git commit hash, message, and relative time."""
+    try:
+        # Format: [Hash] - [Message] ([Time ago])
+        result = subprocess.check_output(
+            ['git', 'log', '-1', '--pretty=format:<code>%h</code> - <b>%s</b> (%ar)'], 
+            stderr=subprocess.STDOUT
+        )
+        return result.decode('utf-8').strip()
+    except Exception as e:
+        print(f"Git fetch error: {e}")
+        return "<i>Unknown commit (Git context unavailable)</i>"
+
 # --- MIDDLEWARES ---
 
 @dp.callback_query.outer_middleware()
@@ -575,16 +590,36 @@ async def main():
     dp.include_router(school.router)
     dp.include_router(charview.router)           # /view  /data
     dp.include_router(lvltrain.router)
-    dp.include_router(catch_all_router)          # Catch-all (must be last)
+    # THIS MUST BE THE ABSOLUTE LAST ROUTER!
+    dp.include_router(catch_all_router)          
 
     print("Bot starting...")
     asyncio.create_task(matchmaking_service.process_queue())
-    await bot.delete_webhook(drop_pending_updates=True)
+
+    # ==========================================
+    #            STARTUP PING LOGIC
+    # ==========================================
+    # Replace this with your actual Telegram Group ID (Usually starts with -100)
+    MAIN_GROUP_ID = os.getenv('MAIN_GROUP_ID', '-1003845254351') 
+    
+    if MAIN_GROUP_ID and MAIN_GROUP_ID != '-1003845254351':
+        try:
+            commit_info = get_latest_commit()
+            startup_msg = (
+                "🟢 <b>SYSTEM ONLINE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "The Cursed Clash servers have been restarted and updated successfully.\n\n"
+                f"📦 <b>Latest Update:</b>\n{commit_info}"
+            )
+            await bot.send_message(chat_id=MAIN_GROUP_ID, text=startup_msg, parse_mode='HTML')
+            print("✅ Startup ping sent to main group!")
+        except Exception as e:
+            print(f"⚠️ Failed to send startup ping. Is the bot an admin in the group? Error: {e}")
+
+    # ==========================================
+
     await dp.start_polling(bot)
 
-
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Bot stopped.")
+    asyncio.run(main())
+
