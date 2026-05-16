@@ -1,3 +1,4 @@
+import traceback
 import difflib
 from aiogram import Router, types, F
 from aiogram.filters import Command
@@ -62,136 +63,159 @@ ITEM_NICKNAMES = {
 CORE_CURRENCIES = ["coins", "dust", "gems", "tickets", "gachatickets", "shards"]
 
 def resolve_item(name: str):
-    """Identifies if a string is a currency or an inventory item, with auto-correction."""
+    """Identifies if a string is a currency, inventory item, or CF."""
     name = name.lower().strip()
     if name in CORE_CURRENCIES:
         if name in ["tickets", "gachatickets"]: return "gachaTickets", True
         if name == "shards": return "shardsCurrency", True
-        return name, True # is_currency = True
+        return name, True 
     
     if name in ITEM_NICKNAMES: return ITEM_NICKNAMES[name], False
     if name in ITEMS: return name, False
+    
+    try:
+        from utils.handlers.shop import CF_ITEMS
+        if name in CF_ITEMS: return name, False
+        # Fuzzy match including CFs
+        all_keys = list(ITEM_NICKNAMES.keys()) + list(ITEMS.keys()) + list(CF_ITEMS.keys()) + \
+                   [i['name'].lower() for i in ITEMS.values()] + \
+                   [i['name'].lower() for i in CF_ITEMS.values()]
+    except Exception:
+        all_keys = list(ITEM_NICKNAMES.keys()) + list(ITEMS.keys()) + [i['name'].lower() for i in ITEMS.values()]
         
-    # Fuzzy match for exact item names or IDs
-    all_keys = list(ITEM_NICKNAMES.keys()) + list(ITEMS.keys()) + [i['name'].lower() for i in ITEMS.values()]
     matches = difflib.get_close_matches(name, all_keys, n=1, cutoff=0.5)
     
     if matches:
         match = matches[0]
         if match in ITEM_NICKNAMES: return ITEM_NICKNAMES[match], False
         if match in ITEMS: return match, False
+        try:
+            from utils.handlers.shop import CF_ITEMS
+            if match in CF_ITEMS: return match, False
+            for k, v in CF_ITEMS.items():
+                if v['name'].lower() == match: return k, False
+        except Exception: pass
+        
         for k, v in ITEMS.items():
             if v['name'].lower() == match: return k, False
                 
     return None, False
 
-
 # --- UNIFIED /SEND COMMAND ---
 @router.message(Command("send", "gift", "give", "take", "tool"))
 async def cmd_unified_send(message: types.Message, user: dict):
-    # 1. Require replying to a message
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        return await message.reply("⚠️ You must **reply to a user's message** to send or modify items.", parse_mode='HTML')
-
-    target_id = message.reply_to_message.from_user.id
-    sender_id = message.from_user.id
-
-    if target_id == sender_id:
-        return await message.reply("❌ You cannot send items to yourself.")
-
-    target_user = await db.users.find_one({"telegramId": target_id})
-    if not target_user:
-        return await message.reply("⚠️ The user you replied to is not registered in the archives.")
-
-    # 2. Parse command: /send [item name] [amount]
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return await message.reply("📝 **Usage:** Reply to a user with <code>/send [item name] [amount]</code>\n*Example:* <code>/send sukuna finger 2</code>", parse_mode='HTML')
-
-    parts = args[1].split()
     try:
-        # Check if the last word is a number
-        amount = int(parts[-1])
-        item_name = " ".join(parts[:-1]).strip()
-        if not item_name:
-            return await message.reply("⚠️ Please specify an item name.")
-    except ValueError:
-        # If the last word isn't a number, assume amount is 1
-        amount = 1
-        item_name = args[1].strip()
+        # 1. Require replying to a message
+        if not message.reply_to_message or not message.reply_to_message.from_user:
+            return await message.reply("⚠️ You must **reply to a user's message** to send or modify items.", parse_mode='HTML')
 
-    # 3. Check Admin Privileges (Using your admin_service)
-    role = await admin_service.get_user_role(sender_id)
-    is_admin = role >= 2  # Allows MODERATOR and above to use admin commands
-    
-    if not is_admin and amount <= 0:
-        return await message.reply("❌ You can only send positive amounts.")
-    if is_admin and amount == 0:
-        return await message.reply("⚠️ Amount cannot be zero.")
+        target_id = message.reply_to_message.from_user.id
+        sender_id = message.from_user.id
 
-    # 4. Resolve the item to database IDs
-    item_id, is_currency = resolve_item(item_name)
-    if not item_id:
-        return await message.reply(f"❌ Item or currency '<b>{item_name}</b>' not found.", parse_mode='HTML')
+        if target_id == sender_id:
+            return await message.reply("❌ You cannot send items to yourself.")
 
-    item_display_name = item_id.capitalize() if is_currency else ITEMS.get(item_id, {}).get('name', item_id)
-    target_name = target_user.get('username', message.reply_to_message.from_user.first_name)
+        target_user = await db.users.find_one({"telegramId": target_id})
+        if not target_user:
+            return await message.reply("⚠️ The user you replied to is not registered in the archives.")
 
-    # ==========================================
-    #             ADMIN LOGIC
-    # ==========================================
-    if is_admin:
+        # 2. Parse command
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            return await message.reply("📝 **Usage:** Reply to a user with <code>/send [item name] [amount]</code>\n*Example:* <code>/send sukuna finger 2</code>", parse_mode='HTML')
+
+        parts = args[1].split()
+        try:
+            amount = int(parts[-1])
+            item_name = " ".join(parts[:-1]).strip()
+            if not item_name: return await message.reply("⚠️ Please specify an item name.")
+        except ValueError:
+            amount = 1
+            item_name = args[1].strip()
+
+        # 3. Safe Admin Check
+        # Instead of relying on admin_service, we check the user document directly
+        # You can also manually add your ID here like: is_admin = (sender_id == YOUR_ID)
+        is_admin = user.get('role', 0) >= 2 or user.get('isAdmin', False)
+        
+        if not is_admin and amount <= 0:
+            return await message.reply("❌ You can only send positive amounts.")
+        if is_admin and amount == 0:
+            return await message.reply("⚠️ Amount cannot be zero.")
+
+        # 4. Resolve the item
+        item_id, is_currency = resolve_item(item_name)
+        if not item_id:
+            return await message.reply(f"❌ Item or currency '<b>{item_name}</b>' not found.", parse_mode='HTML')
+
+        # Get Display Name safely
         if is_currency:
-            await db.users.update({"telegramId": target_id}, {"$inc": {item_id: amount}})
+            item_display_name = item_id.capitalize()
         else:
-            inv = target_user.get('inventory', [])
-            idx = next((i for i, x in enumerate(inv) if x['id'] == item_id), -1)
-            if idx > -1:
-                inv[idx]['qty'] += amount
-            elif amount > 0:
-                inv.append({"id": item_id, "qty": amount})
-            
-            inv = [i for i in inv if i['qty'] > 0] # Clean up 0 qty items
-            await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv}})
+            item_data = ITEMS.get(item_id)
+            if not item_data:
+                from utils.handlers.shop import CF_ITEMS
+                item_data = CF_ITEMS.get(item_id, {})
+            item_display_name = item_data.get('name', item_id)
 
-        if amount > 0:
-            return await message.reply(f"🪄 **ADMIN SPAWN:** Granted {amount:,}x **{item_display_name}** to @{target_name}.", parse_mode='HTML')
-        else:
-            return await message.reply(f"⚖️ **ADMIN TAKE:** Removed {abs(amount):,}x **{item_display_name}** from @{target_name}.", parse_mode='HTML')
+        target_name = target_user.get('username', message.reply_to_message.from_user.first_name)
 
-    # ==========================================
-    #             PLAYER LOGIC
-    # ==========================================
-    else:
-        if is_currency:
-            sender_bal = user.get(item_id, 0)
-            if sender_bal < amount:
-                return await message.reply(f"❌ You don't have enough **{item_display_name}**. (Balance: {sender_bal:,})", parse_mode='HTML')
-            
-            await db.users.update({"telegramId": sender_id}, {"$inc": {item_id: -amount}})
-            await db.users.update({"telegramId": target_id}, {"$inc": {item_id: amount}})
-
-        else:
-            inv_sender = user.get('inventory', [])
-            idx_sender = next((i for i, x in enumerate(inv_sender) if x['id'] == item_id), -1)
-            
-            if idx_sender == -1 or inv_sender[idx_sender]['qty'] < amount:
-                has_qty = inv_sender[idx_sender]['qty'] if idx_sender != -1 else 0
-                return await message.reply(f"❌ You don't have enough **{item_display_name}**. (You have: {has_qty:,})", parse_mode='HTML')
-
-            # Deduct from sender
-            inv_sender[idx_sender]['qty'] -= amount
-            inv_sender = [i for i in inv_sender if i['qty'] > 0]
-            await db.users.update({"telegramId": sender_id}, {"$set": {"inventory": inv_sender}})
-
-            # Add to target
-            inv_target = target_user.get('inventory', [])
-            idx_target = next((i for i, x in enumerate(inv_target) if x['id'] == item_id), -1)
-            if idx_target > -1:
-                inv_target[idx_target]['qty'] += amount
+        # --- ADMIN LOGIC ---
+        if is_admin:
+            if is_currency:
+                await db.users.update({"telegramId": target_id}, {"$inc": {item_id: amount}})
             else:
-                inv_target.append({"id": item_id, "qty": amount})
-            await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv_target}})
+                inv = target_user.get('inventory', [])
+                idx = next((i for i, x in enumerate(inv) if x['id'] == item_id), -1)
+                if idx > -1: inv[idx]['qty'] += amount
+                elif amount > 0: inv.append({"id": item_id, "qty": amount})
+                
+                inv = [i for i in inv if i['qty'] > 0]
+                await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv}})
 
-        return await message.reply(f"🎁 **GIFT SENT:** You gave {amount:,}x **{item_display_name}** to @{target_name}!", parse_mode='HTML')
+            if amount > 0:
+                return await message.reply(f"🪄 **ADMIN SPAWN:** Granted {amount:,}x **{item_display_name}** to @{target_name}.", parse_mode='HTML')
+            else:
+                return await message.reply(f"⚖️ **ADMIN TAKE:** Removed {abs(amount):,}x **{item_display_name}** from @{target_name}.", parse_mode='HTML')
+
+        # --- PLAYER LOGIC ---
+        else:
+            if is_currency:
+                sender_bal = user.get(item_id, 0)
+                if sender_bal < amount:
+                    return await message.reply(f"❌ You don't have enough **{item_display_name}**. (Balance: {sender_bal:,})", parse_mode='HTML')
+                
+                await db.users.update({"telegramId": sender_id}, {"$inc": {item_id: -amount}})
+                await db.users.update({"telegramId": target_id}, {"$inc": {item_id: amount}})
+            else:
+                inv_sender = user.get('inventory', [])
+                idx_sender = next((i for i, x in enumerate(inv_sender) if x['id'] == item_id), -1)
+                
+                if idx_sender == -1 or inv_sender[idx_sender]['qty'] < amount:
+                    has_qty = inv_sender[idx_sender]['qty'] if idx_sender != -1 else 0
+                    return await message.reply(f"❌ You don't have enough **{item_display_name}**. (You have: {has_qty:,})", parse_mode='HTML')
+
+                inv_sender[idx_sender]['qty'] -= amount
+                inv_sender = [i for i in inv_sender if i['qty'] > 0]
+                await db.users.update({"telegramId": sender_id}, {"$set": {"inventory": inv_sender}})
+
+                inv_target = target_user.get('inventory', [])
+                idx_target = next((i for i, x in enumerate(inv_target) if x['id'] == item_id), -1)
+                if idx_target > -1: inv_target[idx_target]['qty'] += amount
+                else: inv_target.append({"id": item_id, "qty": amount})
+                
+                await db.users.update({"telegramId": target_id}, {"$set": {"inventory": inv_target}})
+
+            return await message.reply(f"🎁 **GIFT SENT:** You gave {amount:,}x **{item_display_name}** to @{target_name}!", parse_mode='HTML')
+
+    except Exception as e:
+        # IF IT CRASHES, IT WILL PRINT THE ERROR DIRECTLY TO TELEGRAM!
+        error_trace = traceback.format_exc()
+        await message.reply(f"⚠️ **CRITICAL COMMAND ERROR:**\n```python\n{error_trace}\n```", parse_mode='Markdown')
+        print(error_trace)
+
+
+
+
+
 
