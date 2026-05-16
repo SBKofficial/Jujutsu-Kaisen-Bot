@@ -1,5 +1,6 @@
 import random
 import time
+import re
 from aiogram import Router, types, F
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command
@@ -60,18 +61,29 @@ async def render_inventory(callback_or_message, user, category=None):
     elif category == 'cfs': cat_name = "Cursed Fragments"
     else: cat_name = "Items"
     
-    msg = f"⚡ <b>Yᴏᴜʀ Iɴᴠᴇɴᴛᴏʀʏ - {cat_name}</b> 👇\n\n<i>Tap an item to view details.</i>"
-    
+    msg = f"⚡ <b>Yᴏᴜʀ Iɴᴠᴇɴᴛᴏʀʏ - {cat_name}</b> 👇\n\n"
     builder = InlineKeyboardBuilder()
+    
     if not filtered_inv:
-        msg += "\n\n<i>You don't have any items in this category.</i>"
-        
-    for entry, item_data in filtered_inv:
-        icon = item_data.get('icon', '🧩') if item_data.get('id', '').startswith('cf') else item_data.get('icon', '📦')
-        builder.row(types.InlineKeyboardButton(
-            text=f"{icon} {item_data['name']} (x{entry['qty']})", 
-            callback_data=f"view_inv_{entry['id']}{uid}"
-        ))
+        msg += "<i>You don't have any items in this category.</i>\n\n"
+    elif category == 'cfs':
+        # Text-based format for CFs
+        msg += "🧩 <b>CFs:</b>\n\n"
+        for entry, item_data in filtered_inv:
+            raw_id = item_data['id']
+            # Clean up the name (e.g. "CF: Divergent Fist" -> "Divergent Fist")
+            clean_name = item_data['name'].replace("CF:", "").replace("CF: ", "").strip()
+            msg += f"  • /{raw_id} [{clean_name}]: {entry['qty']}\n"
+        msg += "\n<i>Tap a command above to view details.</i>"
+    else:
+        # Button-based format for Weapons & Items
+        msg += "<i>Tap an item to view details.</i>\n\n"
+        for entry, item_data in filtered_inv:
+            icon = item_data.get('icon', '📦')
+            builder.row(types.InlineKeyboardButton(
+                text=f"{icon} {item_data['name']} (x{entry['qty']})", 
+                callback_data=f"view_inv_{entry['id']}{uid}"
+            ))
     
     builder.row(types.InlineKeyboardButton(text="🔙 Back to Categories", callback_data=f"cmd_inv{uid}"))
 
@@ -79,6 +91,43 @@ async def render_inventory(callback_or_message, user, category=None):
         await media.edit_banner(callback_or_message.message, "inventory", msg, reply_markup=builder.as_markup())
     else:
         await media.send_banner(callback_or_message.bot, callback_or_message.chat.id, "inventory", msg, reply_markup=builder.as_markup())
+
+# --- COMMAND HANDLER FOR CLICKING A CF COMMAND (e.g. /cf109) ---
+@router.message(F.text.regexp(r"^/(cf\d+)$"))
+async def cmd_view_cf_direct(message: types.Message, user: dict):
+    if not user: return
+    
+    cf_id = message.text.strip()[1:].lower() # Gets "cf109" from "/cf109"
+    from utils.handlers.shop import CF_ITEMS
+    
+    item = CF_ITEMS.get(cf_id)
+    if not item: 
+        return await message.reply("❌ Cursed Fragment not found in the archives.")
+
+    inv_entry = next((i for i in user.get('inventory', []) if i['id'] == cf_id), None)
+    if not inv_entry or inv_entry['qty'] <= 0: 
+        return await message.reply("❌ You do not own this Cursed Fragment.")
+
+    uid = f":uid_{user['telegramId']}"
+    builder = InlineKeyboardBuilder()
+
+    type_str = "CURSED FRAGMENT"
+    desc = (
+        f"⚔️ <b>Power:</b> {item.get('power', 0)}\n"
+        f"🎯 <b>Accuracy:</b> {item.get('accuracy', 0)}%\n\n"
+        f"<i>A fragment holding a cursed technique. This can be equipped to your sorcerers to grant them new abilities in combat.</i>"
+    )
+    
+    msg = (
+        ui.format_header(item['name']) + "\n\n"
+        f"Type: <b>{type_str}</b>\n"
+        f"Quantity: <b>{inv_entry['qty']}</b>\n\n"
+        f"{desc}"
+    )
+
+    builder.row(types.InlineKeyboardButton(text="⬅️ Back to CFs", callback_data=f"inv_cat_cfs{uid}"))
+    await media.send_banner(message.bot, message.chat.id, "inventory", msg, reply_markup=builder.as_markup())
+
 
 @router.message(Command("inventory", "inv"))
 @router.callback_query(F.data.startswith("cmd_inv"))
@@ -103,13 +152,11 @@ async def cmd_inventory_category(callback: types.CallbackQuery, user: dict):
 async def view_item_details(callback: types.CallbackQuery, user: dict):
     item_id = callback.data.replace("view_inv_", "").split(":")[0]
     
-    # Import CF_ITEMS here as well
     from utils.handlers.shop import CF_ITEMS
     
     item = ITEMS.get(item_id) or CF_ITEMS.get(item_id)
     if not item: 
-        await callback.answer("Item not found.")
-        return
+        return await callback.answer("Item not found.")
     await callback.answer()
 
     inv_entry = next((i for i in user.get('inventory', []) if i['id'] == item_id), None)
@@ -119,7 +166,6 @@ async def view_item_details(callback: types.CallbackQuery, user: dict):
     uid = f":uid_{user['telegramId']}"
     builder = InlineKeyboardBuilder()
 
-    # Special handling for Cursed Fragments
     if item_id.startswith('cf'):
         type_str = "CURSED FRAGMENT"
         desc = (
@@ -127,7 +173,6 @@ async def view_item_details(callback: types.CallbackQuery, user: dict):
             f"🎯 <b>Accuracy:</b> {item.get('accuracy', 0)}%\n\n"
             f"<i>A fragment holding a cursed technique. This can be equipped to your sorcerers to grant them new abilities in combat.</i>"
         )
-    # Standard items
     else:
         type_str = item.get('shop', {}).get('category', 'Consumable').upper()
         desc = f"<i>{item.get('description', '')}</i>"
@@ -147,7 +192,6 @@ async def view_item_details(callback: types.CallbackQuery, user: dict):
     )
 
     builder.row(types.InlineKeyboardButton(text="⬅️ Back to Bag", callback_data=f"cmd_inv{uid}"))
-
     await media.edit_banner(callback.message, item_id, msg, reply_markup=builder.as_markup())
 
 @router.callback_query(F.data.startswith("use_inv_"))
@@ -211,7 +255,6 @@ async def use_item(callback: types.CallbackQuery, user: dict):
     elif item_id in ['minor_hp_potion', 'ce_charge']:
         return await callback.answer("⚔️ This is a combat item! Use it during a battle.", show_alert=True)
 
-    # Standard decrement logic
     inv_entry['qty'] -= 1
     final_inv = [i for i in inv if i['qty'] > 0]
     
@@ -222,7 +265,6 @@ async def use_item(callback: types.CallbackQuery, user: dict):
         "$inc": inc_ops
     })
 
-    # Update local user object for UI
     user.update(set_ops)
     for k, v in inc_ops.items():
         user[k] = user.get(k, 0) + v
