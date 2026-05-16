@@ -16,8 +16,9 @@ from database import db
 from utils import ui, media
 from utils.handlers import (
     registration, gacha, explore, inventory, shop, train, pvp,
-    team, upgrades, roster, quests, clans, utility, social, admin,
-    domains, minigame, tournament, competition, challenge, school, lvltrain
+    team, upgrades, roster, quests, clans, utility, social, admin, # <-- Make sure social is here!
+    domains, minigame, tournament, competition, challenge, school,
+    lvltrain
 )
 from utils.handlers import Keyboard_handler, charview   # ← NEW
 from services.matchmaking import matchmaking_service
@@ -25,9 +26,6 @@ from services.admin_service import AdminService
 from services.cache_service import cache_service
 from services.user_service import user_service
 from utils.combat.visual import visual_engine
-
-
-
 
 from aiogram import Router
 catch_all_router = Router()
@@ -590,6 +588,12 @@ async def main():
     dp.include_router(school.router)
     dp.include_router(charview.router)           # /view  /data
     dp.include_router(lvltrain.router)
+    
+    # Add the social router here so /send works!
+    dp.include_router(social.router)           
+    
+    # THIS MUST BE THE ABSOLUTE LAST ROUTER!
+    dp.include_router(catch_all_router)          
     # THIS MUST BE THE ABSOLUTE LAST ROUTER!
     dp.include_router(catch_all_router)          
 
