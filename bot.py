@@ -108,9 +108,11 @@ async def user_loader_middleware(handler, event, data):
     now     = time.time()
     user    = None
     if user_id:
-        user = await db.users.find_one({"telegramId": user_id})
-        if user:
-            cache_service.set_user(user_id, user)
+        user = cache_service.get_user(user_id)
+        if not user:
+            user = await db.users.find_one({"telegramId": user_id})
+            if user:
+                cache_service.set_user(user_id, user)
 
 
 
@@ -218,7 +220,7 @@ MAINTENANCE_CACHE = {"value": False, "last_check": 0}
 
 async def get_maintenance():
     now = time.time()
-    if now - MAINTENANCE_CACHE["last_check"] < 60:
+    if now - MAINTENANCE_CACHE["last_check"] < 300:
         return MAINTENANCE_CACHE["value"]
     setting = await db.settings.find_one({"key": "maintenance"})
     MAINTENANCE_CACHE["value"]      = bool(setting and setting.get('value'))
@@ -260,13 +262,23 @@ async def cmd_start(message: types.Message, user: dict, state: FSMContext):
         val = args[1].lstrip('@')
         if val.isdigit():
             target_id = int(val)
-            target_user = await db.users.find_one({"telegramId": target_id})
+            target_user = cache_service.get_user(target_id)
+            if not target_user:
+                target_user = await db.users.find_one({"telegramId": target_id})
+                if target_user:
+                    cache_service.set_user(target_id, target_user)
         else:
             target_user = await db.users.find_one({"username": val})
-            if target_user: target_id = target_user['telegramId']
+            if target_user:
+                target_id = target_user['telegramId']
+                cache_service.set_user(target_id, target_user)
     elif message.reply_to_message:
         target_id = message.reply_to_message.from_user.id
-        target_user = await db.users.find_one({"telegramId": target_id})
+        target_user = cache_service.get_user(target_id)
+        if not target_user:
+            target_user = await db.users.find_one({"telegramId": target_id})
+            if target_user:
+                cache_service.set_user(target_id, target_user)
 
     # Handle Groups
     if message.chat.type in ("group", "supergroup"):
@@ -360,6 +372,25 @@ async def show_profile(message: types.Message, user: dict, user_id: int, edit: b
         "grade": grade_title,
     }
     
+    # Fetch clan name from db
+    clan_name = "None"
+    if user.get('clanId'):
+        try:
+            clan = await db.clans.find_one({"_id": user['clanId']})
+            if clan:
+                clan_name = clan.get('name', 'None')
+        except Exception as e:
+            print(f"DEBUG Error fetching clan: {e}")
+
+    # Determine display name
+    name = "Unknown"
+    if user_id == message.from_user.id:
+        name = message.from_user.first_name
+    elif message.reply_to_message and message.reply_to_message.from_user.id == user_id:
+        name = message.reply_to_message.from_user.first_name
+    else:
+        name = user.get('username', 'Unknown')
+
     # Active Char
     active_char = None
     team_ids = user.get('teamIds', [])
@@ -373,16 +404,28 @@ async def show_profile(message: types.Message, user: dict, user_id: int, edit: b
         logger.error(f"Image Gen Error: {e}")
         buffer = None
 
-    # 4. Text Content (minimalist)
-    battles  = user.get('battles', 0)
-    win_rate = int((user.get('battlesWon', 0) / battles * 100)) if battles > 0 else 0
-
+    # 4. Text Content (Aesthetic layout with collapsible quotes)
     caption = (
-        f"㊙️ <b>{ui.sc('SORCERER DOSSIER')}</b>\n"
-        f"<i>\"{user.get('title', 'Wandering Soul')}\"</i>\n\n"
-        f"💰 <b>{ui.sc('COINS')}:</b> <code>{user.get('coins', 0):,}</code> | ✨ <b>{ui.sc('DUST')}:</b> <code>{user.get('dust', 0):,}</code>\n"
-        f"⚔️ <b>{ui.sc('BATTLES')}:</b> <code>{battles}</code> | 🎯 <b>{ui.sc('WIN')}:</b> <code>{win_rate}%</code>\n"
-        f"🔋 <b>{ui.sc('STAMINA')}:</b> <code>{user.get('stamina', 0)}/100</code>\n"
+        f"╭━━━ ━━━╮\n"
+        f"  <b>{ui.sc('basic info')}</b>\n"
+        f"╰━━━ ━━━╯\n"
+        f"<blockquote expandable>"
+        f"👤 <b>{ui.sc('name')}</b> — {name}\n"
+        f"🏷️ <b>{ui.sc('username')}</b> — @{user.get('username', 'Unknown')}\n"
+        f"🆔 <b>{ui.sc('id')}</b> — <code>{user_id}</code>"
+        f"</blockquote>\n\n"
+        f"╭━━━  ━━━╮\n"
+        f"    <b>{ui.sc('identity')}</b>\n"
+        f"╰━━━  ━━━╯\n"
+        f"<blockquote expandable>"
+        f"🎖️ <b>{ui.sc('rank')}</b> — {user.get('rank', 'Iron').upper()}\n"
+        f"⚡ <b>{ui.sc('level')}</b> — <code>{user.get('playerLevel', 1)}</code>\n"
+        f"⭐ <b>{ui.sc('grade')}</b> — {grade_title}\n"
+        f"🏫 <b>{ui.sc('school')}</b> — {user.get('school', 'Tokyo')}\n"
+        f"🎗️ <b>{ui.sc('title')}</b> — <i>\"{user.get('title', 'Wandering Soul')}\"</i>\n"
+        f"⚧️ <b>{ui.sc('gender')}</b> — {user.get('vessel', 'Other')}\n"
+        f"🛡️ <b>{ui.sc('clan')}</b> — {clan_name}"
+        f"</blockquote>"
     )
 
 

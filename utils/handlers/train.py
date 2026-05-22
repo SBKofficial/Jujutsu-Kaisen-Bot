@@ -77,10 +77,16 @@ def build_battle_keyboard(battle):
 # ── Start battle ──────────────────────────────────────────────────────────
 async def start_battle(callback_or_message, user, wild_target=None, level='normal', state: FSMContext = None):
     user_id = user['telegramId']
-    try:
-        roster = await db.roster.find({"userId": user_id})
-    except Exception:
-        roster = []
+    from services.cache_service import cache_service
+    cached = cache_service.get_roster(user_id)
+    if cached is not None:
+        roster = cached
+    else:
+        try:
+            roster = await db.roster.find({"userId": user_id})
+        except Exception:
+            roster = []
+        cache_service.set_roster(user_id, roster)
 
     team_ids  = user.get('teamIds', [])
     user_team = []

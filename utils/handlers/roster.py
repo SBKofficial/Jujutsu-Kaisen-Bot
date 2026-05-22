@@ -1,4 +1,5 @@
 import asyncio
+# pyrefly: ignore [missing-import]
 from aiogram import Router, types, F
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command
@@ -8,9 +9,21 @@ from database import db
 from utils import ui, media
 from utils.data import characters
 from services.user_service import user_service
+from services.cache_service import cache_service
 from bson import ObjectId
 
 router = Router()
+
+async def get_user_roster(user_id):
+    cached = cache_service.get_roster(user_id)
+    if cached is not None:
+        return cached
+    try:
+        roster = await db.roster.find({"userId": user_id})
+    except Exception:
+        roster = []
+    cache_service.set_roster(user_id, roster)
+    return roster
 
 @router.message(Command("mysorcerers", "collection", "mycharacter"))
 @router.callback_query(F.data.startswith("cmd_roster"))
@@ -41,13 +54,7 @@ RARITY_ICON = {
 
 async def render_roster(callback_or_message, user, page=1):
     user_id = user['telegramId']
-    try:
-        roster = await db.roster.find({"userId": user_id})
-    except Exception:
-        try:
-            roster = []
-        except Exception:
-            roster = []
+    roster = await get_user_roster(user_id)
     team_ids = user.get('teamIds', [])
 
     per_page = 5
@@ -125,7 +132,7 @@ async def handle_release_menu_router(callback: types.CallbackQuery, user: dict, 
 
 async def render_release_menu(callback, user, state: FSMContext, filter_commons=False, page=0):
     user_id = user['telegramId']
-    roster = await db.roster.find({"userId": user_id})
+    roster = await get_user_roster(user_id)
     team_ids = user.get('teamIds', [])
     
     targets = roster
@@ -190,7 +197,7 @@ async def toggle_release_select(callback: types.CallbackQuery, state: FSMContext
 @router.callback_query(F.data == "roster_nav_details")
 async def handle_details_nav(callback: types.CallbackQuery, user: dict):
     user_id = user['telegramId']
-    roster = await db.roster.find({"userId": user_id})
+    roster = await get_user_roster(user_id)
     
     if not roster:
         return await callback.answer("Roster is empty.")
@@ -209,15 +216,16 @@ async def handle_details_nav(callback: types.CallbackQuery, user: dict):
 async def show_character_details(callback: types.CallbackQuery, user: dict):
     roster_id = callback.data.replace("roster_view_", "")
     user_id = user['telegramId']
-    char = await db.roster.find_one({"_id": roster_id, "userId": user_id})
+    roster = await get_user_roster(user_id)
+    char = next((c for c in roster if str(c['_id']) == roster_id), None)
     if not char: return await callback.answer("Data missing.")
 
-    roster = await db.roster.find({"userId": user_id, "charId": char['charId']})
-    roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
-    idx = next((i for i, x in enumerate(roster) if str(x['_id']) == roster_id), 0)
+    char_roster = [c for c in roster if c['charId'] == char['charId']]
+    char_roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
+    idx = next((i for i, x in enumerate(char_roster) if str(x['_id']) == roster_id), 0)
     
     await callback.answer()
-    await render_inspection(callback, roster, idx, user_id)
+    await render_inspection(callback, char_roster, idx, user_id, user)
 
 @router.callback_query(F.data.startswith("rost_dep_"))
 async def handle_deployment(callback: types.CallbackQuery, user: dict):
@@ -234,9 +242,11 @@ async def handle_deployment(callback: types.CallbackQuery, user: dict):
     
     await callback.answer(f"✅ {char_id} deployed to Slot {slot_idx + 1}!", show_alert=True)
     # Refresh view
-    char = await db.roster.find_one({"charId": char_id, "userId": user['telegramId']})
-    new_callback = callback.model_copy(update={'data': f"roster_view_{char['_id']}"})
-    await show_character_details(new_callback, user)
+    roster = await get_user_roster(user['telegramId'])
+    char = next((c for c in roster if c['charId'] == char_id), None)
+    if char:
+        new_callback = callback.model_copy(update={'data': f"roster_view_{char['_id']}"})
+        await show_character_details(new_callback, user)
 
 @router.callback_query(F.data.startswith("roster_upg_lvl_"))
 async def handle_roster_lvl_up(callback: types.CallbackQuery, user: dict):
@@ -260,7 +270,8 @@ async def handle_roster_star_up(callback: types.CallbackQuery, user: dict):
 @router.callback_query(F.data.startswith("roster_release_conf_"))
 async def handle_roster_release_conf(callback: types.CallbackQuery, user: dict):
     roster_id = callback.data.replace("roster_release_conf_", "")
-    char = await db.roster.find_one({"_id": roster_id})
+    roster = await get_user_roster(user['telegramId'])
+    char = next((c for c in roster if str(c['_id']) == roster_id), None)
     if not char: return await callback.answer("Spirit already departed.")
     
     msg = (
@@ -279,7 +290,8 @@ async def handle_roster_release_conf(callback: types.CallbackQuery, user: dict):
 @router.callback_query(F.data.startswith("roster_release_exec_"))
 async def handle_roster_release_exec(callback: types.CallbackQuery, user: dict):
     roster_id = callback.data.replace("roster_release_exec_", "")
-    char = await db.roster.find_one({"_id": roster_id})
+    roster = await get_user_roster(user['telegramId'])
+    char = next((c for c in roster if str(c['_id']) == roster_id), None)
     if not char: return await callback.answer("Spirit already departed.")
 
     # Calculate rewards based on rarity/level
@@ -336,7 +348,8 @@ async def show_global_archive(callback_or_message, page=0):
 async def view_char_details_archive(callback: types.CallbackQuery, user: dict):
     char_name = callback.data.replace("cmd_view_char_", "")
     # Find in roster first
-    roster_entry = await db.roster.find_one({"userId": user['telegramId'], "charId": char_name})
+    roster = await get_user_roster(user['telegramId'])
+    roster_entry = next((c for c in roster if c['charId'] == char_name), None)
     if roster_entry:
         return await show_character_details(callback.model_copy(update={'data': f"roster_view_{roster_entry['_id']}"}), user)
     
@@ -395,7 +408,8 @@ async def cmd_inspect(message: types.Message, user: dict):
         return await message.reply(f"❌ No character found matching '<b>{query}</b>'.", parse_mode='HTML')
 
     # 2. Search roster for ANY of these IDs
-    roster = await db.roster.find({"userId": user_id, "charId": {"$in": matching_ids}})
+    full_roster = await get_user_roster(user_id)
+    roster = [c for c in full_roster if c['charId'] in matching_ids]
     
     if not roster:
         # Show archive for the best match
@@ -477,7 +491,8 @@ async def handle_ins_sel_nav(callback: types.CallbackQuery, user: dict):
     page = int(parts[4].split(":")[0])
     user_id = user['telegramId']
     
-    roster = await db.roster.find({"userId": user_id, "charId": char_id})
+    full_roster = await get_user_roster(user_id)
+    roster = [c for c in full_roster if c['charId'] == char_id]
     roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
     
     await callback.answer()
@@ -535,7 +550,9 @@ async def handle_inspect_tp_ts_menu(callback: types.CallbackQuery, user: dict):
     uid = f":uid_{user['telegramId']}"
     
     from bson import ObjectId
-    entry = await db.roster.find_one({"_id": ObjectId(rid)})
+    roster = await get_user_roster(user['telegramId'])
+    entry = next((c for c in roster if str(c['_id']) == rid), None)
+    if not entry: return await callback.answer("Spirit not found.")
     base = characters.DATA.get(entry['charId'])
     
     table = _build_tp_ts_table(entry, base)
@@ -557,11 +574,14 @@ async def handle_inspect_tp_ts_menu(callback: types.CallbackQuery, user: dict):
     await callback.answer()
     await media.smart_edit(callback.message, msg, reply_markup=builder.as_markup())
 
-async def render_inspection(callback_or_message, roster, index, user_id):
+async def render_inspection(callback_or_message, roster, index, user_id, user=None):
     entry = roster[index]
     char_id = entry['charId']
     base = characters.DATA[char_id]
-    user = await db.users.find_one({"telegramId": user_id})
+    if user is None:
+        user = cache_service.get_user(user_id)
+        if user is None:
+            user = await db.users.find_one({"telegramId": user_id})
     
     # Calculate stats
     from services.user_service import user_service
@@ -653,26 +673,28 @@ async def handle_inspection_nav(callback: types.CallbackQuery, user: dict):
     user_id = user['telegramId']
     
     # Search roster for these IDs to re-sort
-    roster = await db.roster.find({"userId": user_id, "charId": char_id})
+    full_roster = await get_user_roster(user_id)
+    roster = [c for c in full_roster if c['charId'] == char_id]
     roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
     
     await callback.answer()
-    await render_inspection(callback, roster, index, user_id)
+    await render_inspection(callback, roster, index, user_id, user)
 
 @router.callback_query(F.data.startswith("ins_v_back_"))
 async def handle_inspect_back(callback: types.CallbackQuery, user: dict):
     rid = callback.data.split("_")[-1].split(":")[0]
     user_id = user['telegramId']
     
-    entry = await db.roster.find_one({"_id": rid})
+    full_roster = await get_user_roster(user_id)
+    entry = next((c for c in full_roster if str(c['_id']) == rid), None)
     if not entry: return await callback.answer("Error.")
     
-    roster = await db.roster.find({"userId": user_id, "charId": entry['charId']})
+    roster = [c for c in full_roster if c['charId'] == entry['charId']]
     roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
     idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
     
     await callback.answer()
-    await render_inspection(callback, roster, idx, user_id)
+    await render_inspection(callback, roster, idx, user_id, user)
 
 @router.callback_query(F.data.startswith("ins_lvlup_"))
 async def handle_inspect_lvlup(callback: types.CallbackQuery, user: dict):
@@ -688,11 +710,13 @@ async def handle_inspect_lvlup(callback: types.CallbackQuery, user: dict):
     await callback.answer("🆙 Leveled Up!", show_alert=True)
     
     # Re-render
-    entry = await db.roster.find_one({"_id": rid})
-    roster = await db.roster.find({"userId": user_id, "charId": entry['charId']})
-    roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
-    idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
-    await render_inspection(callback, roster, idx, user_id)
+    full_roster = await get_user_roster(user_id)
+    entry = next((c for c in full_roster if str(c['_id']) == rid), None)
+    if entry:
+        roster = [c for c in full_roster if c['charId'] == entry['charId']]
+        roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
+        idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
+        await render_inspection(callback, roster, idx, user_id, user)
 
 @router.callback_query(F.data.startswith("ins_boost_tp_"))
 async def handle_inspect_boost_tp(callback: types.CallbackQuery, user: dict):
@@ -717,11 +741,13 @@ async def handle_inspect_boost_tp(callback: types.CallbackQuery, user: dict):
     await callback.answer(f"🧬 TP BOOSTED BY {boost}!", show_alert=True)
     
     # Re-render
-    entry = await db.roster.find_one({"_id": ObjectId(rid)})
-    roster = await db.roster.find({"userId": user['telegramId'], "charId": entry['charId']})
-    roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
-    idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
-    await render_inspection(callback, roster, idx, user['telegramId'])
+    full_roster = await get_user_roster(user['telegramId'])
+    entry = next((c for c in full_roster if str(c['_id']) == rid), None)
+    if entry:
+        roster = [c for c in full_roster if c['charId'] == entry['charId']]
+        roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
+        idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
+        await render_inspection(callback, roster, idx, user['telegramId'], user)
 
 @router.callback_query(F.data.startswith("ins_boost_ts_"))
 async def handle_inspect_boost_ts(callback: types.CallbackQuery, user: dict):
@@ -746,11 +772,13 @@ async def handle_inspect_boost_ts(callback: types.CallbackQuery, user: dict):
     await callback.answer(f"📈 TS BOOSTED BY {boost}!", show_alert=True)
     
     # Re-render
-    entry = await db.roster.find_one({"_id": ObjectId(rid)})
-    roster = await db.roster.find({"userId": user['telegramId'], "charId": entry['charId']})
-    roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
-    idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
-    await render_inspection(callback, roster, idx, user['telegramId'])
+    full_roster = await get_user_roster(user['telegramId'])
+    entry = next((c for c in full_roster if str(c['_id']) == rid), None)
+    if entry:
+        roster = [c for c in full_roster if c['charId'] == entry['charId']]
+        roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
+        idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
+        await render_inspection(callback, roster, idx, user['telegramId'], user)
 
 @router.callback_query(F.data.startswith("ins_nick_"))
 async def handle_inspect_nick(callback: types.CallbackQuery):
@@ -813,11 +841,13 @@ async def handle_inspect_do_equip(callback: types.CallbackQuery, user: dict):
         await callback.answer(f"✅ Item {'unequipped' if not new_item else 'equipped'}!", show_alert=True)
         
         # Re-render inspection
-        entry = await db.roster.find_one({"_id": ObjectId(rid)})
-        roster = await db.roster.find({"userId": user['telegramId'], "charId": entry['charId']})
-        roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
-        idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
-        await render_inspection(callback, roster, idx, user['telegramId'])
+        full_roster = await get_user_roster(user['telegramId'])
+        entry = next((c for c in full_roster if str(c['_id']) == rid), None)
+        if entry:
+            roster = [c for c in full_roster if c['charId'] == entry['charId']]
+            roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
+            idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
+            await render_inspection(callback, roster, idx, user['telegramId'], user)
     except:
         await callback.answer("❌ Error equipping item.")
 
@@ -826,7 +856,8 @@ async def handle_inspect_moves(callback: types.CallbackQuery, user: dict):
     rid = callback.data.split("_")[2].split(":")[0]
     uid = f":uid_{user['telegramId']}"
     
-    entry = await db.roster.find_one({"_id": rid})
+    full_roster = await get_user_roster(user['telegramId'])
+    entry = next((c for c in full_roster if str(c['_id']) == rid), None)
     if not entry: return await callback.answer("Character not found.")
     
     base = characters.DATA.get(entry['charId'])
@@ -874,17 +905,10 @@ async def handle_inspect_gradeup(callback: types.CallbackQuery, user: dict):
     
     await callback.answer("🎖 Grade Promoted!", show_alert=True)
     # Re-render inspection
-    entry = await db.roster.find_one({"_id": rid})
-    roster = await db.roster.find({"userId": user['telegramId'], "charId": entry['charId']})
-    roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
-    idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
-    user_id = user['telegramId']
-    
-    roster = await db.roster.find({"userId": user_id, "charId": char_id})
-    roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
-    
-    if index < 0 or index >= len(roster):
-        return await callback.answer("Invalid index.")
-        
-    await callback.answer()
-    await render_inspection(callback, roster, index, user_id)
+    full_roster = await get_user_roster(user['telegramId'])
+    entry = next((c for c in full_roster if str(c['_id']) == rid), None)
+    if entry:
+        roster = [c for c in full_roster if c['charId'] == entry['charId']]
+        roster.sort(key=lambda x: (x.get('level', 1), x.get('xp', 0)), reverse=True)
+        idx = next((i for i, x in enumerate(roster) if str(x['_id']) == rid), 0)
+        await render_inspection(callback, roster, idx, user['telegramId'], user)

@@ -52,6 +52,14 @@ class CollectionWrapper:
                     pass
             except Exception:
                 pass
+        elif self.name == 'roster':
+            try:
+                from services.cache_service import cache_service
+                uid = query.get('userId')
+                if uid:
+                    cache_service.invalidate_roster(uid)
+            except Exception:
+                pass
 
     async def find(self, query=None):
         query = self._fix_query(query)
@@ -64,7 +72,19 @@ class CollectionWrapper:
 
     async def update(self, query, update, multi=False, upsert=False):
         query = self._fix_query(query)
-        await self._invalidate_cache(query)
+        if self.name == 'users':
+            try:
+                from services.cache_service import cache_service
+                tid = query.get('telegramId')
+                if tid:
+                    cache_service.update_user(tid, update)
+                else:
+                    await self._invalidate_cache(query)
+            except Exception:
+                await self._invalidate_cache(query)
+        else:
+            await self._invalidate_cache(query)
+
         if multi:
             res = await self.collection.update_many(query, update, upsert=upsert)
         else:
@@ -72,6 +92,21 @@ class CollectionWrapper:
         return res.modified_count or res.upserted_id or 0
 
     async def insert(self, doc):
+        if self.name == 'roster':
+            try:
+                from services.cache_service import cache_service
+                if isinstance(doc, list):
+                    for d in doc:
+                        uid = d.get('userId')
+                        if uid:
+                            cache_service.invalidate_roster(uid)
+                else:
+                    uid = doc.get('userId')
+                    if uid:
+                        cache_service.invalidate_roster(uid)
+            except Exception:
+                pass
+
         if isinstance(doc, list):
             res = await self.collection.insert_many(doc)
             return doc
@@ -106,7 +141,9 @@ class Database:
         # Use certifi to provide the missing SSL certificates to MongoDB Atlas
         self.client = AsyncIOMotorClient(
             MONGO_URI, 
-            tlsCAFile=certifi.where()
+            tlsCAFile=certifi.where(),
+            minPoolSize=5,
+            maxPoolSize=50
         )
 
         # Use jjk_bot as the default database

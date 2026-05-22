@@ -23,10 +23,16 @@ router = Router()
 
 async def render_team_menu(callback_or_message, user):
     user_id = user['telegramId']
-    try:
-        roster = await db.roster.find({"userId": user_id})
-    except Exception:
-        roster = []
+    from services.cache_service import cache_service
+    cached = cache_service.get_roster(user_id)
+    if cached is not None:
+        roster = cached
+    else:
+        try:
+            roster = await db.roster.find({"userId": user_id})
+        except Exception:
+            roster = []
+        cache_service.set_roster(user_id, roster)
 
     team_ids = user.get('teamIds', [])
     if not team_ids and roster:
@@ -130,10 +136,17 @@ async def team_remove_exec(callback: types.CallbackQuery, user: dict):
 @router.callback_query(F.data.startswith("team_add_menu_"))
 async def team_add_menu(callback: types.CallbackQuery, user: dict):
     page = int(callback.data.split("_")[-1])
-    try:
-        roster = await db.roster.find({"userId": user['telegramId']})
-    except Exception:
-        roster = []
+    user_id = user['telegramId']
+    from services.cache_service import cache_service
+    cached = cache_service.get_roster(user_id)
+    if cached is not None:
+        roster = cached
+    else:
+        try:
+            roster = await db.roster.find({"userId": user_id})
+        except Exception:
+            roster = []
+        cache_service.set_roster(user_id, roster)
     
     bench = [r for r in roster if r['charId'] not in user.get('teamIds', [])]
     bench.sort(key=lambda x: x.get('level', 1), reverse=True)
