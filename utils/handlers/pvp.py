@@ -21,11 +21,43 @@ async def on_match_found(p1_queue, p2_queue, mode):
 matchmaking_service.on_match_found = on_match_found
 
 async def start_pvp_battle(p1_q, p2_q, mode, bot: Bot):
-    u1 = await db.users.find_one({"telegramId": p1_q['userId']})
-    u2 = await db.users.find_one({"telegramId": p2_q['userId']})
+    from services.cache_service import cache_service
+    u1 = cache_service.get_user(p1_q['userId'])
+    u2 = cache_service.get_user(p2_q['userId'])
+    r1 = cache_service.get_roster(p1_q['userId'])
+    r2 = cache_service.get_roster(p2_q['userId'])
+
+    tasks = []
+    task_keys = []
     
-    r1 = await db.roster.find({"userId": p1_q['userId']})
-    r2 = await db.roster.find({"userId": p2_q['userId']})
+    if u1 is None:
+        tasks.append(db.users.find_one({"telegramId": p1_q['userId']}))
+        task_keys.append('u1')
+    if u2 is None:
+        tasks.append(db.users.find_one({"telegramId": p2_q['userId']}))
+        task_keys.append('u2')
+    if r1 is None:
+        tasks.append(db.roster.find({"userId": p1_q['userId']}))
+        task_keys.append('r1')
+    if r2 is None:
+        tasks.append(db.roster.find({"userId": p2_q['userId']}))
+        task_keys.append('r2')
+        
+    if tasks:
+        db_results = await asyncio.gather(*tasks)
+        for key, res in zip(task_keys, db_results):
+            if key == 'u1':
+                u1 = res
+                if u1: cache_service.set_user(p1_q['userId'], u1)
+            elif key == 'u2':
+                u2 = res
+                if u2: cache_service.set_user(p2_q['userId'], u2)
+            elif key == 'r1':
+                r1 = res or []
+                cache_service.set_roster(p1_q['userId'], r1)
+            elif key == 'r2':
+                r2 = res or []
+                cache_service.set_roster(p2_q['userId'], r2)
 
     def hydrate_team(user, roster):
         team = []
