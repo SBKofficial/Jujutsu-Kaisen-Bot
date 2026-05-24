@@ -16,8 +16,12 @@ class UserService:
             100: {"title": "Special Grade", "gachaTickets": 50}
         }
 
-    async def add_advanced_rewards(self, user_id, mode, won, streak=0, custom_coins=None, custom_xp=None, custom_dust=None):
-        user = await db.users.find_one({"telegramId": user_id})
+    async def add_advanced_rewards(self, user_id, mode, won, streak=0, custom_coins=None, custom_xp=None, custom_dust=None, user=None):
+        if not user:
+            from services.cache_service import cache_service
+            user = cache_service.get_user(user_id)
+            if not user:
+                user = await db.users.find_one({"telegramId": user_id})
         if not user: return None
 
         mode_map = {
