@@ -47,8 +47,31 @@ async def handle_show_friends(message: types.Message, user: dict):
         return await message.reply("Your contact list is empty. Use /addfriend to connect.")
     
     msg = ui.format_header("FRIENDS LIST") + "\n\n"
+    from services.cache_service import cache_service
+    
+    needed_ids = []
+    cached_friends = {}
     for f in friends:
-        friend_data = await db.users.find_one({"telegramId": f['userId']})
+        fid = f['userId']
+        cached = cache_service.get_user(fid)
+        if cached is not None:
+            cached_friends[fid] = cached
+        else:
+            needed_ids.append(fid)
+            
+    if needed_ids:
+        tasks = [db.users.find_one({"telegramId": fid}) for fid in needed_ids]
+        db_results = await asyncio.gather(*tasks)
+        for fid, res in zip(needed_ids, db_results):
+            if res:
+                cache_service.set_user(fid, res)
+                cached_friends[fid] = res
+            else:
+                cached_friends[fid] = None
+                
+    for f in friends:
+        fid = f['userId']
+        friend_data = cached_friends.get(fid)
         status = f"🎖 {friend_data.get('rank', 'Sorcerer')}" if friend_data else "Unknown"
         msg += f"👤 @{f['username']} - {status}\n"
     
@@ -213,7 +236,6 @@ async def cmd_unified_send(message: types.Message, user: dict):
         error_trace = traceback.format_exc()
         await message.reply(f"⚠️ **CRITICAL COMMAND ERROR:**\n```python\n{error_trace}\n```", parse_mode='Markdown')
         print(error_trace)
-
 
 
 
