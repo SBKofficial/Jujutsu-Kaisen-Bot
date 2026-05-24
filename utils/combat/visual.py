@@ -2,6 +2,7 @@ import os
 import io
 import time
 import random
+import asyncio
 from PIL import Image, ImageDraw, ImageFont
 from utils import assets
 
@@ -9,13 +10,40 @@ class VisualEngine:
     def __init__(self):
         self.bg_cache = {}
         self.asset_cache = {}
+        self.font_cache = {}
         self.font_path = "arial.ttf"
+        
+        self.font_bold = self._get_font("arialbd.ttf", 22)
+        self.font_mono = self._get_font("cour.ttf", 22)
+
+    def _get_font(self, name, size):
+        cache_key = (name, size)
+        if cache_key in self.font_cache:
+            return self.font_cache[cache_key]
+        
+        paths = [
+            os.path.join("C:\\Windows\\Fonts", name),
+            name,
+            os.path.join(assets.BASE_DIR, name),
+            os.path.join(assets.IMAGE_DIR, name)
+        ]
+        for p in paths:
+            if os.path.exists(p):
+                try:
+                    f = ImageFont.truetype(p, size)
+                    self.font_cache[cache_key] = f
+                    return f
+                except:
+                    pass
+        # Fallback to arial
         try:
-            self.font_bold = ImageFont.truetype("arialbd.ttf", 22)
-            self.font_mono = ImageFont.truetype("cour.ttf", 22)
+            f = ImageFont.truetype("arial.ttf", size)
+            self.font_cache[cache_key] = f
+            return f
         except:
-            self.font_bold = ImageFont.load_default()
-            self.font_mono = ImageFont.load_default()
+            f = ImageFont.load_default()
+            self.font_cache[cache_key] = f
+            return f
 
     def _get_image(self, path, size=None):
         cache_key = f"{path}_{size}"
@@ -36,26 +64,23 @@ class VisualEngine:
         return (255, 68, 68) # Red
 
     async def generate_battle_scene(self, p1_char, p2_char, active_side='p1'):
+        return await asyncio.to_thread(self._generate_battle_scene_sync, p1_char, p2_char, active_side)
+
+    def _generate_battle_scene_sync(self, p1_char, p2_char, active_side='p1'):
         try:
             # 1. Resolve Paths
             p1_path = assets.get_pixel_asset_path(p1_char)
             p2_path = assets.get_pixel_asset_path(p2_char)
 
             # 2. Open Sprites
-            p1_img = None
-            if p1_path and os.path.exists(p1_path):
-                p1_img = Image.open(p1_path).convert("RGBA").resize((320, 320))
-            
-            p2_img = None
-            if p2_path and os.path.exists(p2_path):
-                p2_img = Image.open(p2_path).convert("RGBA").resize((320, 320))
+            p1_img = self._get_image(p1_path, (320, 320)) if p1_path else None
+            p2_img = self._get_image(p2_path, (320, 320)) if p2_path else None
 
             # 3. Create Canvas
             bg_path = assets.REGISTRY.get("Battle_BG")
-            if not self.bg_cache and bg_path and os.path.exists(bg_path):
-                self.bg_cache = Image.open(bg_path).convert("RGBA").resize((1024, 600))
+            bg_img = self._get_image(bg_path, (1024, 600)) if bg_path else None
             
-            canvas = self.bg_cache.copy() if self.bg_cache else Image.new("RGBA", (1024, 600), (10, 10, 20, 255))
+            canvas = bg_img.copy() if bg_img else Image.new("RGBA", (1024, 600), (10, 10, 20, 255))
             draw = ImageDraw.Draw(canvas)
 
             # 4. Composite Sprites
@@ -103,7 +128,6 @@ class VisualEngine:
             else:
                 draw.text((80, 540), f"▶ {last_log}", fill=(0, 255, 136), font=self.font_mono)
 
-
             # 6. Return as Buffer
             img_byte_arr = io.BytesIO()
             canvas.convert("RGB").save(img_byte_arr, format='JPEG', quality=75)
@@ -114,6 +138,9 @@ class VisualEngine:
             return None
 
     async def generate_gacha_grid(self, results):
+        return await asyncio.to_thread(self._generate_gacha_grid_sync, results)
+
+    def _generate_gacha_grid_sync(self, results):
         # Implementation for 10-pull grid using Pillow
         canvas_w, canvas_h = 1600, 940
         item_w, item_h = 300, 420
@@ -145,8 +172,9 @@ class VisualEngine:
 
             # Portrait
             try:
-                portrait = Image.open(img_path).convert("RGBA").resize((260, 260))
-                canvas.paste(portrait, (left + 20, top + 20), portrait)
+                portrait = self._get_image(img_path, (260, 260))
+                if portrait:
+                    canvas.paste(portrait, (left + 20, top + 20), portrait)
             except:
                 pass
 
@@ -164,6 +192,9 @@ class VisualEngine:
 
     async def generate_team_card(self, team_members):
         """Generate a premium team formation card with uniform layout."""
+        return await asyncio.to_thread(self._generate_team_card_sync, team_members)
+
+    def _generate_team_card_sync(self, team_members):
         try:
             canvas_w, canvas_h = 1024, 600
             canvas = Image.new("RGB", (canvas_w, canvas_h), (15, 15, 25))
@@ -171,11 +202,16 @@ class VisualEngine:
 
             # 1. Background Styling
             bg_path = assets.REGISTRY.get("Team_BG")
-            if bg_path and os.path.exists(bg_path):
-                bg = Image.open(bg_path).convert("RGBA").resize((canvas_w, canvas_h))
-                overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 160))
-                bg = Image.alpha_composite(bg, overlay)
-                canvas.paste(bg.convert("RGB"), (0, 0))
+            bg_key = f"Team_BG_composite_{canvas_w}_{canvas_h}"
+            if bg_key in self.asset_cache:
+                canvas.paste(self.asset_cache[bg_key], (0, 0))
+            elif bg_path:
+                bg = self._get_image(bg_path, (canvas_w, canvas_h))
+                if bg:
+                    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 160))
+                    bg_composite = Image.alpha_composite(bg, overlay).convert("RGB")
+                    self.asset_cache[bg_key] = bg_composite
+                    canvas.paste(bg_composite, (0, 0))
             else:
                 for i in range(canvas_h):
                     color = (15 + i//40, 15 + i//50, 25 + i//30)
@@ -239,49 +275,37 @@ class VisualEngine:
 
     async def generate_license_card(self, user_data, player_photo_bytes=None, active_char=None):
         """Generate a premium High-Tech Sorcerer License based on the requested PRO.jpg style."""
+        return await asyncio.to_thread(self._generate_license_card_sync, user_data, player_photo_bytes, active_char)
+
+    def _generate_license_card_sync(self, user_data, player_photo_bytes=None, active_char=None):
         try:
             canvas_w, canvas_h = 1024, 600
             
             # 1. Background
-            bg_path = os.path.join(assets.IMAGE_DIR, "tech_bg.png")
-            if os.path.exists(bg_path):
-                print(f"DEBUG: Loading background from {bg_path}")
-                canvas = Image.open(bg_path).convert("RGBA").resize((canvas_w, canvas_h))
+            bg_path = os.path.join(assets.IMAGE_DIR, "tech_bg.webp")
+            if not os.path.exists(bg_path):
+                bg_path = os.path.join(assets.IMAGE_DIR, "tech_bg.png")
+
+            bg_key = f"license_bg_composite_{canvas_w}_{canvas_h}"
+            if bg_key in self.asset_cache:
+                canvas = self.asset_cache[bg_key].copy()
             else:
-                print(f"DEBUG: Background NOT FOUND at {bg_path}, using fallback.")
-                canvas = Image.new("RGBA", (canvas_w, canvas_h), (5, 15, 35, 255))
+                bg_img = self._get_image(bg_path, (canvas_w, canvas_h))
+                if bg_img:
+                    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 120))
+                    bg_composite = Image.alpha_composite(bg_img, overlay)
+                    self.asset_cache[bg_key] = bg_composite
+                    canvas = bg_composite.copy()
+                else:
+                    canvas = Image.new("RGBA", (canvas_w, canvas_h), (5, 15, 35, 255))
             
             draw = ImageDraw.Draw(canvas)
             
-            # Glow/Overlay
-            overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 120))
-            canvas = Image.alpha_composite(canvas, overlay)
-            draw = ImageDraw.Draw(canvas)
-
             # 2. Fonts Initialization
-            def get_font(name, size):
-                # Search system and project paths
-                paths = [
-                    os.path.join("C:\\Windows\\Fonts", name),
-                    name,
-                    os.path.join(assets.BASE_DIR, name),
-                    os.path.join(assets.IMAGE_DIR, name)
-                ]
-                for p in paths:
-                    if os.path.exists(p):
-                        try:
-                            return ImageFont.truetype(p, size)
-                        except: pass
-                # Last resort fallback to arial if specific font fails
-                try:
-                    return ImageFont.truetype("arial.ttf", size)
-                except:
-                    return ImageFont.load_default()
-
-            header_font = get_font("arialbd.ttf", 40)
-            sub_font = get_font("arial.ttf", 18)
-            label_font_small = get_font("arialbd.ttf", 18)
-            val_font_small = get_font("arialbd.ttf", 22)
+            header_font = self._get_font("arialbd.ttf", 40)
+            sub_font = self._get_font("arial.ttf", 18)
+            label_font_small = self._get_font("arialbd.ttf", 18)
+            val_font_small = self._get_font("arialbd.ttf", 22)
 
             # 3. Header & Logos
             school = str(user_data.get('school', 'Tokyo'))
@@ -290,17 +314,23 @@ class VisualEngine:
             
             s_key = "Kyoto_Logo" if is_kyoto else "Tokyo_Logo"
             s_path = assets.REGISTRY.get(s_key)
-            if s_path and os.path.exists(s_path):
-                s_img = Image.open(s_path).convert("RGBA").resize((110, 110))
-                # Circular Mask for Logo
-                mask = Image.new("L", (110, 110), 0)
-                mask_draw = ImageDraw.Draw(mask)
-                mask_draw.ellipse((0, 0, 110, 110), fill=255)
-                
-                # Apply circular mask
-                logo_circle = Image.new("RGBA", (110, 110), (0,0,0,0))
-                logo_circle.paste(s_img, (0,0), mask=mask)
+            logo_key = f"{s_key}_circle_110"
+            if logo_key in self.asset_cache:
+                logo_circle = self.asset_cache[logo_key]
                 canvas.paste(logo_circle, (45, 35), logo_circle)
+            elif s_path:
+                s_img = self._get_image(s_path, (110, 110))
+                if s_img:
+                    mask = Image.new("L", (110, 110), 0)
+                    mask_draw = ImageDraw.Draw(mask)
+                    mask_draw.ellipse((0, 0, 110, 110), fill=255)
+                    
+                    logo_circle = Image.new("RGBA", (110, 110), (0,0,0,0))
+                    logo_circle.paste(s_img, (0,0), mask=mask)
+                    self.asset_cache[logo_key] = logo_circle
+                    canvas.paste(logo_circle, (45, 35), logo_circle)
+            
+            if s_path:
                 # Outer glow for logo
                 draw.ellipse([45, 35, 155, 145], outline=(0, 229, 255, 100), width=3)
 
@@ -319,18 +349,21 @@ class VisualEngine:
             x_val = 260
             
             # Load Icons
-            icons_img = None
             icons_path = os.path.join(assets.IMAGE_DIR, "profile_icons.png")
-            if os.path.exists(icons_path):
-                icons_img = Image.open(icons_path).convert("RGBA")
+            icons_img = self._get_image(icons_path)
 
             def get_icon(idx):
                 if not icons_img: return None
+                cache_key = f"icon_crop_{idx}"
+                if cache_key in self.asset_cache:
+                    return self.asset_cache[cache_key]
                 w, h = icons_img.size
                 cw, ch = w // 3, h // 3
                 row, col = idx // 3, idx % 3
                 icon = icons_img.crop((col * cw, row * ch, (col + 1) * cw, (row + 1) * ch))
-                return icon.resize((45, 45), Image.LANCZOS)
+                icon_resized = icon.resize((45, 45), Image.LANCZOS)
+                self.asset_cache[cache_key] = icon_resized
+                return icon_resized
 
             fields = [
                 (0, "Student ID:", str(user_data.get('telegramId', '000000'))),
@@ -352,10 +385,8 @@ class VisualEngine:
                 # Icon placement
                 icon_img = get_icon(icon_idx)
                 if icon_img:
-                    # Use the icon image (perfectly centered vertically in the 44px box)
                     canvas.paste(icon_img, (48, yy - 13), icon_img)
                 else:
-                    # Fallback to circle if icon loading fails
                     draw.ellipse([50, yy - 8, 85, yy + 28], outline=(0, 229, 255, 120), width=2)
                 
                 # Text Labels
@@ -381,14 +412,35 @@ class VisualEngine:
                     draw.text((x_val, yy + 10), val, fill=(255, 255, 255), font=val_font_small, anchor="lm")
 
             # 5. Player Photo & Grade Frame (Right Side)
-            # Outer Frame with accents
             draw.rectangle([600, 180, 970, 530], outline=(0, 229, 255, 100), width=2)
             draw.line([600, 180, 660, 180], fill=(0, 229, 255), width=6)
             draw.line([600, 180, 600, 240], fill=(0, 229, 255), width=6)
             draw.line([970, 530, 910, 530], fill=(0, 229, 255), width=6)
             draw.line([970, 530, 970, 470], fill=(0, 229, 255), width=6)
 
-            if player_photo_bytes:
+            if not player_photo_bytes:
+                default_pfp_path = os.path.join(assets.IMAGE_DIR, "PRO.webp")
+                if not os.path.exists(default_pfp_path):
+                    default_pfp_path = os.path.join(assets.IMAGE_DIR, "PRO.png")
+                
+                pfp_key = "default_pfp_processed_350_340"
+                if pfp_key in self.asset_cache:
+                    p_img_cropped = self.asset_cache[pfp_key]
+                    canvas.paste(p_img_cropped, (610, 185), p_img_cropped)
+                elif os.path.exists(default_pfp_path):
+                    try:
+                        p_img = Image.open(default_pfp_path).convert("RGBA")
+                        target_w, target_h = 350, 340
+                        ratio = max(target_w/p_img.width, target_h/p_img.height)
+                        p_img = p_img.resize((int(p_img.width*ratio), int(p_img.height*ratio)), Image.LANCZOS)
+                        left = (p_img.width - target_w) / 2
+                        top = (p_img.height - target_h) / 2
+                        p_img_cropped = p_img.crop((left, top, left + target_w, top + target_h))
+                        self.asset_cache[pfp_key] = p_img_cropped
+                        canvas.paste(p_img_cropped, (610, 185), p_img_cropped)
+                    except Exception as e:
+                        print(f"DEBUG: Photo paste error: {e}")
+            else:
                 try:
                     p_img = Image.open(io.BytesIO(player_photo_bytes)).convert("RGBA")
                     target_w, target_h = 350, 340
@@ -401,7 +453,7 @@ class VisualEngine:
                 except Exception as e:
                     print(f"DEBUG: Photo paste error: {e}")
 
-            # Grade Circle Badge
+            # Grade Badge
             grade_raw = str(user_data.get('grade', '4')).replace("Grade ", "")
             draw.ellipse([570, 150, 670, 250], fill=(10, 20, 40), outline=(0, 229, 255), width=4)
             draw.text((620, 180), "Grade", fill=(160, 210, 255), font=sub_font, anchor="mm")
@@ -423,7 +475,6 @@ class VisualEngine:
             img_byte_arr = io.BytesIO()
             canvas.convert("RGB").save(img_byte_arr, format='JPEG', quality=95)
             return img_byte_arr.getvalue()
-            
         except Exception as e:
             print(f"License Card Error: {e}")
             import traceback; traceback.print_exc()
@@ -431,6 +482,9 @@ class VisualEngine:
 
     async def generate_inspection_card(self, char_entry, base_char, full_stats):
         """Generate a premium character inspection card."""
+        return await asyncio.to_thread(self._generate_inspection_card_sync, char_entry, base_char, full_stats)
+
+    def _generate_inspection_card_sync(self, char_entry, base_char, full_stats):
         try:
             canvas_w, canvas_h = 1024, 500
             canvas = Image.new("RGB", (canvas_w, canvas_h), (15, 15, 25))
@@ -438,25 +492,25 @@ class VisualEngine:
 
             # 1. Background
             bg_path = assets.REGISTRY.get("Team_BG")
-            if bg_path and os.path.exists(bg_path):
-                bg = Image.open(bg_path).convert("RGBA").resize((canvas_w, canvas_h))
-                overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 180))
-                bg = Image.alpha_composite(bg, overlay)
-                canvas.paste(bg.convert("RGB"), (0, 0))
+            bg_key = f"Team_BG_composite_{canvas_w}_{canvas_h}_inspect"
+            if bg_key in self.asset_cache:
+                canvas.paste(self.asset_cache[bg_key], (0, 0))
+            elif bg_path:
+                bg = self._get_image(bg_path, (canvas_w, canvas_h))
+                if bg:
+                    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 180))
+                    bg_composite = Image.alpha_composite(bg, overlay).convert("RGB")
+                    self.asset_cache[bg_key] = bg_composite
+                    canvas.paste(bg_composite, (0, 0))
             else:
                 for i in range(canvas_h):
                     color = (15 + i//40, 15 + i//50, 25 + i//30)
                     draw.line([(0, i), (canvas_w, i)], fill=color)
 
             # Define Fonts
-            try:
-                title_font = ImageFont.truetype("arialbd.ttf", 48)
-                subtitle_font = ImageFont.truetype("arial.ttf", 28)
-                stat_font = ImageFont.truetype("cour.ttf", 24)
-            except:
-                title_font = ImageFont.load_default()
-                subtitle_font = ImageFont.load_default()
-                stat_font = ImageFont.load_default()
+            title_font = self._get_font("arialbd.ttf", 48)
+            subtitle_font = self._get_font("arial.ttf", 28)
+            stat_font = self._get_font("cour.ttf", 24)
 
             rarity = base_char.get('rarity', 'Common')
             rarity_colors = {
@@ -470,16 +524,24 @@ class VisualEngine:
 
             # 2. Character Portrait (Left)
             img_path = assets.get_asset_path(base_char)
-            if img_path and os.path.exists(img_path):
-                portrait = Image.open(img_path).convert("RGBA")
-                target_h = 420
-                ratio = target_h / portrait.height
-                portrait = portrait.resize((int(portrait.width * ratio), target_h), Image.LANCZOS)
-                
-                # Center portrait in a box
-                box_w = 400
-                p_left = 40 + (box_w - portrait.width) // 2
-                canvas.paste(portrait, (p_left, 40), portrait)
+            if img_path:
+                cache_key = f"portrait_inspect_{img_path}"
+                if cache_key in self.asset_cache:
+                    portrait = self.asset_cache[cache_key]
+                    box_w = 400
+                    p_left = 40 + (box_w - portrait.width) // 2
+                    canvas.paste(portrait, (p_left, 40), portrait)
+                else:
+                    portrait = self._get_image(img_path)
+                    if portrait:
+                        target_h = 420
+                        ratio = target_h / portrait.height
+                        portrait = portrait.resize((int(portrait.width * ratio), target_h), Image.LANCZOS)
+                        self.asset_cache[cache_key] = portrait
+                        
+                        box_w = 400
+                        p_left = 40 + (box_w - portrait.width) // 2
+                        canvas.paste(portrait, (p_left, 40), portrait)
                 
                 # Frame
                 draw.rectangle([40, 40, 440, 460], outline=color, width=4)
@@ -510,8 +572,6 @@ class VisualEngine:
                 ("TS", full_stats.get('technique', 0), (0, 229, 255))
             ]
 
-            # Dynamic scaling for bars
-            # For HP/CE, we use a higher max. For core stats, we use a relative max.
             max_core = max([s[1] for s in stats_list[2:]] + [100])
             max_hpce = max([s[1] for s in stats_list[:2]] + [1000])
 
@@ -553,4 +613,3 @@ class VisualEngine:
 
 
 visual_engine = VisualEngine()
-
